@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "SecureShield Browser Extension",
-  "version": "1.0.0",
-  "description": "Advanced browser security suite with malicious site detection, access control, and security auditing",
+  "name": "SecureShield Browser Extension (Dev Shell)",
+  "version": "0.1.0",
+  "description": "Load the latest SecureShield build for side-by-side extension testing.",
   "permissions": [
     "storage",
     "tabs",
@@ -10,15 +10,16 @@
     "webNavigation",
     "cookies",
     "scripting",
-    "declarativeNetRequest",
-    "declarativeNetRequestWithHostAccess"
+    "declarativeNetRequest"
   ],
   "host_permissions": [
-    "<all_urls>"
+    "<all_urls>",
+    "http://localhost:4000/*",
+    "http://127.0.0.1:4000/*"
   ],
   "action": {
-    "default_popup": "index.html",
-    "default_title": "SecureShield",
+    "default_popup": "popup/index.html",
+    "default_title": "SecureShield Dev",
     "default_icon": {
       "16": "icons/icon16.png",
       "48": "icons/icon48.png",
@@ -26,18 +27,18 @@
     }
   },
   "background": {
-    "service_worker": "background.js"
+    "service_worker": "popup/background.js"
   },
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["content.js"],
-      "run_at": "document_start"
+      "js": ["popup/content.js"],
+      "run_at": "document_end"
     }
   ],
   "web_accessible_resources": [
     {
-      "resources": ["assets/*"],
+      "resources": ["popup/assets/*"],
       "matches": ["<all_urls>"]
     }
   ],

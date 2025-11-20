@@ -15,11 +15,16 @@ export function Card({ children, className, padding = 'md' }: CardProps) {
   };
   
   return (
-    <div className={cn(
-      'bg-white rounded-lg border border-gray-200 shadow-sm',
-      paddingClasses[padding],
-      className
-    )}>
+    <div 
+      data-animate="card"
+      className={cn(
+        'bg-white rounded-lg border border-gray-200 shadow-sm',
+        'transition-all duration-300 ease-out',
+        'hover:shadow-lg hover:border-blue-200 hover:-translate-y-0.5',
+        paddingClasses[padding],
+        className
+      )}
+    >
       {children}
     </div>
   );

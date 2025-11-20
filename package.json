@@ -8,7 +8,9 @@
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit -p tsconfig.app.json"
+    "typecheck": "tsc --noEmit -p tsconfig.app.json",
+    "sync-extension": "node scripts/sync-extension.mjs",
+    "build:extension": "npm run build && npm run sync-extension"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.57.4",
@@ -20,6 +22,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.9.1",
+    "@types/chrome": "^0.1.30",
     "@types/react": "^18.3.5",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.1",

@@ -5,10 +5,14 @@ A comprehensive browser security suite built with React, TypeScript, and Tailwin
 ## Features
 
 ### 🔒 Web Access Lock
-- Block access to specific websites
-- URL-based filtering with custom block reasons
-- Easy management of blocked sites list
+- Lock individual tabs or named tab groups with PIN protection
+- Store lock metadata (notes, timestamps, status) in the backend for device sync
+- Unlock/re-lock flows that respect the user's PIN and audit trail
 
+### 🔑 Authentication & PIN Security
+- Email + password authentication backed by MySQL and JWT sessions
+- Optional per-user PIN hashing for sensitive tab unlock actions
+- `/auth/me` verification keeps the popup session in sync with the API
 ### 🛡️ Malicious Site Detector
 - Real-time website security analysis
 - Threat level assessment (Safe/Suspicious/Danger)
@@ -32,40 +36,82 @@ A comprehensive browser security suite built with React, TypeScript, and Tailwin
 ## Technology Stack
 
 - **Frontend**: React 18 + TypeScript
+- **Backend**: Node.js + Express + TypeScript (server/)
 - **Build Tool**: Vite
 - **Styling**: Tailwind CSS
 - **Routing**: React Router v6
 - **Extension**: Chrome Manifest V3
 - **Icons**: Lucide React
+- **Database**: Aiven MySQL (or compatible MySQL instance)
+- **Security**: JWT authentication, bcrypt password/PIN hashing, zod validation
 
 ## Development Setup
 
 ### Prerequisites
-- Node.js 16+ 
+- Node.js 18+ 
 - npm or yarn
 - Chrome browser for testing
+- MySQL instance (the project uses an Aiven-hosted database, but any MySQL 8+ instance works)
 
 ### Installation
 
 1. Clone the repository:
 ```bash
 git clone <repository-url>
-cd secureshield-extension
+cd Browser-extension
 ```
 
-2. Install dependencies:
+2. Install frontend dependencies (workspace root):
 ```bash
 npm install
 ```
 
-3. Start the development server:
+3. Install backend dependencies:
+```bash
+cd server
+npm install
+cd ..
+```
+
+### Environment Variables
+
+Create the following files before running any servers:
+
+- `./.env`: copy `.env.example` to `.env` then adjust `VITE_API_URL` (defaults to `http://localhost:4000/api`).
+- `./server/.env`: copy `server/.env.example` to `server/.env` then set:
+	- `PORT` (commonly `4000`)
+	- `DATABASE_URL` (Aiven connection string or local MySQL DSN with optional `ssl-mode` parameters)
+	- `JWT_SECRET` (generate a long random string)
+
+The backend automatically applies the required schema (users + tab_locks tables) on startup.
+
+### Running the apps
+
+In one terminal, run the API server from `server/`:
+
+```bash
+cd server
+npm run dev
+```
+
+In another terminal (workspace root), start the Vite dev server:
+
 ```bash
 npm run dev
 ```
 
-4. Build the extension:
+`vite.config.ts` proxies `/api` calls to `http://localhost:4000`, so the popup always talks to the local API without extra configuration.
+
+### Building for production
+
 ```bash
+# Frontend bundle for the extension
 npm run build
+
+# Backend compile + start
+cd server
+npm run build
+npm start
 ```
 
 ### Loading the Extension in Chrome
@@ -85,48 +131,52 @@ npm run build
 
 ### Development Workflow
 
-1. **Development**: Run `npm run dev` to start the Vite development server
-2. **Testing**: Load the extension in Chrome using the built files
+1. **Development**: Run `npm run dev` (workspace root) and `cd server && npm run dev` to keep both frontend and API hot-reloading
+2. **Testing**: Load the extension in Chrome using the built files while the API server is running
 3. **Debugging**: Use Chrome DevTools to debug popup, background script, and content scripts
+
+### Extension Shell for Side-by-Side Testing
+
+- After verifying a feature in the web app, run `npm run build:extension` to copy the `dist/` output into `extension-shell/popup/`.
+- Load `extension-shell/` via `chrome://extensions` (Developer Mode → Load unpacked) to interact with the extension build while continuing to develop the web UI.
+- Repeat `npm run build:extension` whenever you need to refresh the extension with the latest UI build. Icons/background/content scripts live alongside the shell and can evolve independently.
 
 ## Project Structure
 
 ```
-src/
-├── components/          # Reusable UI components
-│   ├── Button.tsx      # Accessible button component
-│   ├── Input.tsx       # Form input with validation
-│   ├── Card.tsx        # Content containers
-│   ├── Modal.tsx       # Modal dialogs
-│   ├── Spinner.tsx     # Loading indicators
-│   ├── Skeleton.tsx    # Loading placeholders
-│   ├── StatusBadge.tsx # Security status indicators
-│   └── Navigation.tsx  # Main navigation component
-├── pages/              # Main application pages
-│   ├── WebAccessLock.tsx
-│   ├── MaliciousSiteDetector.tsx
-│   ├── ThreatQuarantine.tsx
-│   ├── DOMContentInspection.tsx
-│   └── CookieSecurityAudit.tsx
-├── extension/          # Extension-specific code
-│   ├── background.ts   # Background service worker
-│   └── content.ts      # Content script
-├── mocks/             # Mock data for development
-│   └── data.ts
-├── types/             # TypeScript type definitions
-│   └── index.ts
-├── utils/             # Utility functions
-│   └── cn.ts          # Class name utility
-└── App.tsx            # Main application component
+.
+├── src/                      # React popup application (Vite)
+│   ├── components/           # Design system primitives (Button, Card, Modal, etc.)
+│   ├── pages/                # Feature screens (WebAccessLock, ThreatQuarantine, ...)
+│   ├── extension/            # Background + content scripts for MV3
+│   ├── context/              # Auth provider + hooks
+│   └── services/             # REST client (api.ts)
+├── public/                   # Static assets served by Vite (background/content stubs)
+├── server/                   # Express + MySQL API
+│   ├── src/
+│   │   ├── routes/           # auth + tab lock endpoints
+│   │   ├── middleware/       # JWT guard
+│   │   ├── config/           # Database pool + schema bootstrap
+│   │   └── utils/            # JWT helpers
+│   ├── package.json
+│   └── tsconfig.json
+└── manifest/tailwind/etc.    # Build + extension config files
 ```
 
 ## Available Scripts
 
-- `npm run dev` - Start development server
-- `npm run build` - Build for production
-- `npm run preview` - Preview production build
+Frontend (workspace root):
+- `npm run dev` - Start the Vite development server with proxy to `/api`
+- `npm run build` - Build the popup/extension bundle into `dist/`
+- `npm run preview` - Preview the production build locally
 - `npm run lint` - Run ESLint
 - `npm run typecheck` - Run TypeScript type checking
+
+Backend (`server/` directory):
+- `npm run dev` - Start the Express API with `ts-node-dev`
+- `npm run build` - Compile TypeScript to `dist/`
+- `npm start` - Run the compiled server
+- `npm run lint` - Type-check the backend sources
 
 ## Extension Architecture
 
@@ -135,6 +185,20 @@ The extension uses Chrome's Manifest V3 with:
 - **Service Worker**: Background processing and API handling
 - **Content Scripts**: DOM inspection and real-time monitoring
 - **Popup**: Main UI interface built with React
+
+## Backend API Overview
+
+- **Base URL**: `http://localhost:4000/api` (or `VITE_API_URL` in production)
+- **Auth**: Send `Authorization: Bearer <jwt>` for every request after login/registration
+- **Content Type**: JSON in/out
+
+Endpoints:
+- `POST /auth/register` & `POST /auth/login` &rarr; create or authenticate users; both return `{ token, user }`
+- `GET /auth/me` &rarr; validate the current token and refresh user data
+- `POST /auth/set-pin` & `POST /auth/verify-pin` &rarr; manage the optional unlock PIN for sensitive flows
+- `GET /locks` &rarr; list the current user's tab locks
+- `POST /locks` &rarr; create a lock (tabs, metadata, group flag)
+- `POST /locks/:id/unlock` & `POST /locks/:id/relock` &rarr; transition lock status with server-side auditing
 
 ### Security Features (Placeholder Implementation)
 

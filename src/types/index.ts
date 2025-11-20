@@ -50,3 +50,27 @@ export interface SiteAnalysisResult {
     certificateValid: boolean;
   };
 }
+
+export interface AuthUser {
+  id: number;
+  email: string;
+  hasPin: boolean;
+}
+
+export interface TabInfo {
+  title: string;
+  url: string;
+}
+
+export type TabLockStatus = 'locked' | 'unlocked';
+
+export interface TabLock {
+  id: number;
+  name: string;
+  note?: string;
+  isGroup: boolean;
+  status: TabLockStatus;
+  tabs: TabInfo[];
+  lockedAt: string;
+  unlockedAt?: string;
+}
