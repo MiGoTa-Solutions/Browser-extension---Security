@@ -1,77 +1,51 @@
+// src/extension/background.ts
 import { authApi, tabLockApi } from '../services/api';
 import { readAuthFromChromeStorage, syncLocksToChromeStorage, readLocksFromChromeStorage } from '../utils/chromeStorage';
 
-// ==================== SETUP ====================
-
+// --- SETUP ---
 chrome.runtime.onInstalled.addListener(async () => {
-  console.log('[Background] SecureShield Installed');
   await runLockSync();
+  // Create a backup alarm every 5 min
   chrome.alarms.create('syncLocks', { periodInMinutes: 5 });
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === 'syncLocks') {
-    runLockSync();
-  }
+  if (alarm.name === 'syncLocks') runLockSync();
 });
 
-// ==================== MESSAGE HANDLING ====================
+// Also sync when user switches tabs to ensure fresh state
+chrome.tabs.onActivated.addListener(() => {
+  runLockSync();
+});
 
+// --- MESSAGE HANDLER ---
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  // 1. PING (Heartbeat)
   if (message.type === 'PING') {
     sendResponse({ pong: true });
     return false;
   }
 
-  // 2. VERIFY ONLY (Does not unlock DB)
-  if (message.type === 'VERIFY_PIN') {
-    handleVerifyPin(message.pin)
-      .then((res) => sendResponse(res))
+  if (message.type === 'UNLOCK_SITE') {
+    handleUnlockSite(message.lockId, message.pin)
+      .then(() => sendResponse({ success: true }))
       .catch((err) => sendResponse({ success: false, error: err.message }));
-    return true; 
+    return true; // Indicates async response
   }
 
-  // 3. UNLOCK (Updates DB + Storage)
-  if (message.type === 'UNLOCK_SITE') {
-    console.log(`[Background] 🔓 Unlocking Site ID: ${message.lockId}`);
-    handleUnlockSite(message.lockId, message.pin)
-      .then(() => {
-        console.log('[Background] Unlock success. Sending response.');
-        sendResponse({ success: true });
-      })
-      .catch((err) => {
-        console.error('[Background] Unlock failed:', err);
-        sendResponse({ success: false, error: err.message });
-      });
-    return true; 
-  }
-  
   return false;
 });
 
-// ==================== NAVIGATION GUARD ====================
-
-chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
-  if (changeInfo.status === 'complete' && tab.url) {
-    const locks = await readLocksFromChromeStorage();
-    const hostname = new URL(tab.url).hostname.replace(/^www\./, '');
-    
-    if (locks[hostname]) {
-      console.log(`[Background] 🔒 Locked site detected: ${hostname}`);
-      // Content script handles the UI, we just log here for debugging
-    }
-  }
-});
-
-// ==================== LOGIC HANDLERS ====================
+// --- CORE LOGIC ---
 
 async function runLockSync() {
   try {
     const auth = await readAuthFromChromeStorage();
     if (!auth || !auth.token) return;
     
+    // Fetch fresh locks from Server
     const response = await tabLockApi.list(auth.token);
+    
+    // Update Chrome Local Storage
     await syncLocksToChromeStorage(response.locks);
     console.log(`[Background] Synced ${response.locks.length} locks`);
   } catch (error) {
@@ -79,27 +53,16 @@ async function runLockSync() {
   }
 }
 
-async function handleVerifyPin(pin: string) {
-  const auth = await readAuthFromChromeStorage();
-  if (!auth?.token) throw new Error('Not authenticated');
-  
-  await authApi.verifyPin(auth.token, { pin });
-  return { success: true };
-}
-
 async function handleUnlockSite(lockId: number, pin: string) {
   const auth = await readAuthFromChromeStorage();
   if (!auth?.token) throw new Error('Not authenticated');
 
-  // 1. Call API (Server DB Update)
+  // 1. Call API to update Database (Server-side)
+  // This changes status to 'unlocked' in MySQL
   await tabLockApi.unlock(auth.token, lockId, pin);
   
-  // 2. Get fresh list (Server -> Extension)
-  const listResponse = await tabLockApi.list(auth.token);
-  
-  // 3. Update Storage (Extension -> Cache)
-  // This is CRITICAL so that new tabs don't get locked
-  await syncLocksToChromeStorage(listResponse.locks);
+  // 2. IMMEDIATE SYNC (Critical)
+  // Fetch the new list (which will exclude the newly unlocked site)
+  // and update chrome.storage immediately.
+  await runLockSync();
 }
-
-export {};
