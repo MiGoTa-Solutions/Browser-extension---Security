@@ -5,7 +5,7 @@ import { requireAuth, AuthenticatedRequest } from '../middleware/requireAuth';
 
 const router = Router();
 
-// Schema for robust validation
+// Validation Schema
 const lockSchema = z.object({
   name: z.string().min(1),
   tabs: z.array(z.object({
@@ -15,23 +15,32 @@ const lockSchema = z.object({
   pin: z.string().min(4)
 });
 
-// 1. GET LOCKS (Standardized Response)
+// 1. GET ALL LOCKS
 router.get('/', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
   try {
+    // Fetch locks that are currently active ('locked')
     const [rows] = await pool.query(
       "SELECT id, name, tabs_json, status, pin FROM tab_locks WHERE user_id = ? AND status = 'locked'",
       [req.userId]
     );
     
-    // Transform for the extension
-    const locks = (rows as any[]).map(row => ({
-      id: row.id,
-      name: row.name,
-      // Only send simple domain list to extension to save space
-      domains: JSON.parse(row.tabs_json || '[]').map((t: any) => t.url),
-      // We verify PIN on backend, but extension needs to know a PIN exists
-      hasPin: !!row.pin
-    }));
+    const locks = (rows as any[]).map(row => {
+      let domains = [];
+      try {
+        // Handle both string JSON and pre-parsed JSON object
+        const tabsData = typeof row.tabs_json === 'string' ? JSON.parse(row.tabs_json) : row.tabs_json;
+        domains = Array.isArray(tabsData) ? tabsData.map((t: any) => t.url) : [];
+      } catch (e) {
+        console.warn(`[TabLocks] Failed to parse tabs for lock ${row.id}`);
+      }
+
+      return {
+        id: row.id,
+        name: row.name,
+        domains: domains,
+        hasPin: !!row.pin // Tell frontend/extension that a PIN exists
+      };
+    });
 
     res.json({ success: true, locks });
   } catch (error) {
@@ -40,16 +49,18 @@ router.get('/', requireAuth, async (req: AuthenticatedRequest, res: Response) =>
   }
 });
 
-// 2. CREATE LOCK
+// 2. CREATE NEW LOCK
 router.post('/', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
   const result = lockSchema.safeParse(req.body);
-  if (!result.success) return res.status(400).json({ error: 'Invalid data' });
+  if (!result.success) {
+    return res.status(400).json({ error: 'Invalid input data', details: result.error });
+  }
 
   const { name, tabs, pin } = result.data;
 
   try {
     await pool.execute(
-      'INSERT INTO tab_locks (user_id, name, tabs_json, pin, status) VALUES (?, ?, ?, ?, ?)',
+      'INSERT INTO tab_locks (user_id, name, tabs_json, pin, status, locked_at) VALUES (?, ?, ?, ?, ?, NOW())',
       [req.userId, name, JSON.stringify(tabs), pin, 'locked']
     );
     
@@ -60,10 +71,12 @@ router.post('/', requireAuth, async (req: AuthenticatedRequest, res: Response) =
   }
 });
 
-// 3. UNLOCK (Verify PIN)
+// 3. UNLOCK A SITE
 router.post('/:id/unlock', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
   const { pin } = req.body;
   const lockId = req.params.id;
+
+  if (!pin) return res.status(400).json({ error: 'PIN is required' });
 
   try {
     const [rows] = await pool.query('SELECT pin FROM tab_locks WHERE id = ? AND user_id = ?', [lockId, req.userId]);
@@ -71,18 +84,22 @@ router.post('/:id/unlock', requireAuth, async (req: AuthenticatedRequest, res: R
 
     if (!lock) return res.status(404).json({ error: 'Lock not found' });
     
-    // In production, verify hash. For now, direct comparison as per your setup.
+    // Check PIN
     if (lock.pin !== pin) {
       return res.status(401).json({ success: false, error: 'Incorrect PIN' });
     }
 
-    // Set status to unlocked
-    await pool.execute("UPDATE tab_locks SET status = 'unlocked' WHERE id = ?", [lockId]);
+    // Update status to unlocked
+    await pool.execute(
+      "UPDATE tab_locks SET status = 'unlocked', unlocked_at = NOW() WHERE id = ?", 
+      [lockId]
+    );
     
     res.json({ success: true });
   } catch (error) {
+    console.error('POST /unlock error:', error);
     res.status(500).json({ success: false, error: 'Server error' });
   }
 });
 
-export default router;
+export default router;  
