@@ -315,10 +315,30 @@ function showPasswordProtectedOverlay(lockId: number, pin: string | null, url: s
     unlockButton.textContent = 'Unlocking...';
     unlockButton.disabled = true;
     
-    // Reload the page to show content
-    setTimeout(() => {
-      location.reload();
-    }, 500);
+    // Request background to perform full unlock (update maps + storage) before reload
+    try {
+      chrome.runtime.sendMessage(
+        {
+          action: 'UNLOCK_TABS',
+          payload: { lockId, pin: enteredPin }
+        },
+        (response: any) => {
+          if (response?.success) {
+            errorMessage.textContent = '✓ Unlocked';
+            unlockButton.textContent = 'Unlocked';
+            setTimeout(() => location.reload(), 300);
+          } else {
+            errorMessage.style.color = '#ef4444';
+            errorMessage.textContent = response?.error || 'Failed to unlock';
+            unlockButton.disabled = false;
+            unlockButton.textContent = 'Unlock Website';
+          }
+        }
+      );
+    } catch (e) {
+      // Fallback: if messaging fails, still attempt local reload
+      setTimeout(() => location.reload(), 500);
+    }
   };
 
   unlockButton?.addEventListener('click', attemptUnlock);
@@ -465,9 +485,18 @@ chrome.runtime.onMessage.addListener((message: TabLockMessage, _sender, sendResp
         sendResponse({ success: false, error: 'Missing lockId' });
         return false;
       }
-      respond(unlockTabs(payload.lockId, payload.pin).then(async () => {
-        await syncLocksFromDatabase();
-      }));
+      respond(
+        remoteUnlockLock(payload.lockId)
+          .catch(err => {
+            // Remote unlock failing should not prevent local unlock; log and continue
+            log('Remote unlock failed, proceeding locally:', err.message);
+          })
+          .then(() => unlockTabs(payload.lockId, payload.pin))
+          .then(async () => {
+            // Force sync to ensure remote unlocked state reflected (or keep local if offline)
+            await syncLocksFromDatabase(false, true);
+          })
+      );
       break;
     case 'SYNC_NOW':
       respond(syncLocksFromDatabase());
@@ -551,6 +580,30 @@ async function createLockViaAPI(
   const result = await response.json();
   log('Lock created successfully:', result);
   return result;
+}
+
+// Unlock on server so subsequent sync does not re-add locally unlocked hosts
+async function remoteUnlockLock(lockId: number): Promise<void> {
+  const authData = await chrome.storage.local.get(['secureShield.auth']);
+  const auth = authData['secureShield.auth'] as { token?: string } | undefined;
+  if (!auth?.token) {
+    log('⚠️ No auth token found; performing local-only unlock for lock', lockId);
+    return;
+  }
+  const API_BASE_URL = 'http://localhost:4000/api';
+  log(`Attempting remote unlock for lock ${lockId}`);
+  const resp = await fetch(`${API_BASE_URL}/locks/${lockId}/unlock`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${auth.token}`,
+      'Content-Type': 'application/json'
+    }
+  });
+  if (!resp.ok) {
+    const errJson = await resp.json().catch(() => ({ error: 'Remote unlock failed' }));
+    throw new Error(errJson.error || 'Remote unlock failed');
+  }
+  log(`✅ Remote unlock succeeded for lock ${lockId}`);
 }
 
 async function getCurrentTabs(): Promise<TabInfo[]> {

@@ -1,5 +1,5 @@
-import { authApi } from '../services/api';
-import { readAuthFromChromeStorage } from '../utils/chromeStorage';
+import { authApi, tabLockApi } from '../services/api';
+import { readAuthFromChromeStorage, syncLocksToChromeStorage } from '../utils/chromeStorage';
 
 // Basic install listener
 chrome.runtime.onInstalled.addListener(() => {
@@ -15,6 +15,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     
     // Keep the channel open for the asynchronous response
     return true; 
+  }
+  
+  if (message.type === 'UNLOCK_SITE') {
+    handleUnlockSite(message.lockId, message.pin)
+      .then(() => sendResponse({ success: true }))
+      .catch((err) => sendResponse({ success: false, error: err.message }));
+    
+    return true;
   }
 });
 
@@ -33,6 +41,32 @@ async function handleVerifyPin(pin: string): Promise<boolean> {
   } catch (error) {
     console.error('PIN Verification failed:', error);
     return false;
+  }
+}
+
+async function handleUnlockSite(lockId: number, pin: string): Promise<void> {
+  const auth = await readAuthFromChromeStorage();
+  
+  if (!auth || !auth.token) {
+    throw new Error('User not authenticated');
+  }
+
+  try {
+    console.log(`[SecureShield] Unlocking site - Lock ID: ${lockId}`);
+    
+    // 1. Call API to update database status to 'unlocked'
+    const response = await tabLockApi.unlock(auth.token, lockId, pin);
+    console.log('[SecureShield] API unlock successful:', response.lock);
+    
+    // 2. Fetch all locks and sync to chrome.storage (removes unlocked from cache)
+    const allLocks = await tabLockApi.list(auth.token);
+    await syncLocksToChromeStorage(allLocks.locks);
+    console.log('[SecureShield] Chrome storage synced - unlocked site removed from cache');
+    
+    // Success - site is now unlocked
+  } catch (error) {
+    console.error('[SecureShield] Unlock failed:', error);
+    throw error;
   }
 }
 

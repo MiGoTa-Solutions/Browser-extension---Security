@@ -6,11 +6,11 @@ async function checkLockStatus() {
   const locks = await readLocksFromChromeStorage();
   
   if (locks[hostname]) {
-    createLockOverlay(locks[hostname].name);
+    createLockOverlay(locks[hostname].name, locks[hostname].lockId);
   }
 }
 
-function createLockOverlay(lockName: string) {
+function createLockOverlay(lockName: string, lockId: string) {
   // Avoid duplicate overlays
   if (document.getElementById('secureshield-overlay')) return;
 
@@ -78,22 +78,32 @@ function createLockOverlay(lockName: string) {
     errorMsg.style.display = 'none';
 
     try {
-      // Send message to background script to verify against API
-      const response = await chrome.runtime.sendMessage({ type: 'VERIFY_PIN', pin });
+      // Send message to background to unlock (updates DB + chrome.storage)
+      const response = await chrome.runtime.sendMessage({ 
+        type: 'UNLOCK_SITE', 
+        lockId: parseInt(lockId, 10),
+        pin 
+      });
 
       if (response && response.success) {
+        // Success: overlay removed, storage updated, DB unlocked
         overlay.remove();
         document.body.style.overflow = '';
-        // Optional: You could add logic here to whitelist this tab temporarily in session storage
+        
+        // Reload to show unlocked content
+        setTimeout(() => {
+          window.location.reload();
+        }, 300);
       } else {
-        errorMsg.textContent = 'Incorrect PIN';
+        errorMsg.textContent = response?.error || 'Incorrect PIN';
         errorMsg.style.display = 'block';
         input.value = '';
         input.focus();
       }
     } catch (e) {
-      errorMsg.textContent = 'Verification error. Check connection.';
+      errorMsg.textContent = 'Unlock failed. Check connection.';
       errorMsg.style.display = 'block';
+      console.error('[SecureShield] Unlock error:', e);
     } finally {
       btn.textContent = originalBtnText;
       btn.removeAttribute('disabled');
