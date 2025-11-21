@@ -18,8 +18,9 @@ export default defineConfig({
     rollupOptions: {
       input: {
         main: resolve(__dirname, 'index.html'),
-        background: resolve(__dirname, 'public/background.ts'),
-        content: resolve(__dirname, 'public/content.ts'),
+        // FIX: Point to src/extension instead of public/
+        background: resolve(__dirname, 'src/extension/background.ts'),
+        content: resolve(__dirname, 'src/extension/content.ts'),
       },
       output: {
         entryFileNames: (chunkInfo) => {

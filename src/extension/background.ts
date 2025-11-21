@@ -1,6 +1,5 @@
-// src/extension/background.ts
 import { authApi, tabLockApi } from '../services/api';
-import { readAuthFromChromeStorage, syncLocksToChromeStorage } from '../utils/chromeStorage';
+import { readAuthFromChromeStorage, syncLocksToChromeStorage, readLocksFromChromeStorage } from '../utils/chromeStorage';
 
 chrome.runtime.onInstalled.addListener(async () => {
   console.log('[Background] Installed. Syncing...');
@@ -10,6 +9,11 @@ chrome.runtime.onInstalled.addListener(async () => {
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === 'syncLocks') runLockSync();
+});
+
+// Sync when user switches tabs (keeps state fresh)
+chrome.tabs.onActivated.addListener(() => {
+  runLockSync();
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -32,7 +36,10 @@ async function runLockSync() {
   try {
     const auth = await readAuthFromChromeStorage();
     if (!auth || !auth.token) return;
+    
+    // Get fresh list from server
     const response = await tabLockApi.list(auth.token);
+    // Update local Chrome storage
     await syncLocksToChromeStorage(response.locks);
     console.log(`[Background] Synced ${response.locks.length} locks`);
   } catch (error) {
@@ -44,9 +51,9 @@ async function handleUnlockSite(lockId: number, pin: string) {
   const auth = await readAuthFromChromeStorage();
   if (!auth?.token) throw new Error('Not authenticated');
 
-  // 1. Update Database
+  // 1. Update Database (Server)
   await tabLockApi.unlock(auth.token, lockId, pin);
   
-  // 2. Refresh Local Cache Immediately
+  // 2. Refresh Local Cache Immediately (Extension)
   await runLockSync();
 }

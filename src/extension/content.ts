@@ -1,11 +1,12 @@
-// src/extension/content.ts
 import { readLocksFromChromeStorage } from '../utils/chromeStorage';
 
-// ==================== 1. SESSION BYPASS ====================
-// Prevents "Unlock -> Reload -> Lock Again" loop
+// ==================== 1. SESSION BYPASS MECHANISM ====================
+// This prevents the "Unlock -> Reload -> Lock Again" loop
+// It persists across reloads within the same tab session
 const SESSION_UNLOCK_PREFIX = 'secureShield_unlocked_';
 
 function getSessionKey(hostname: string): string {
+  // Remove 'www.' to match how keys are stored
   return SESSION_UNLOCK_PREFIX + hostname.replace(/^www\./, '');
 }
 
@@ -25,6 +26,8 @@ async function checkLockStatus() {
   if (locks[hostname]) {
     console.log(`[Content] 🔒 Site is LOCKED: ${hostname}`);
     createLockOverlay(locks[hostname].name, locks[hostname].lockId, hostname);
+  } else {
+    console.log(`[Content] ✅ Site is NOT locked: ${hostname}`);
   }
 }
 
@@ -39,6 +42,7 @@ function createLockOverlay(lockName: string, lockId: number, hostname: string) {
   document.body.appendChild(rootHost);
   const shadow = rootHost.attachShadow({ mode: 'closed' });
 
+  // Stop scrolling
   document.body.style.overflow = 'hidden';
 
   const overlay = document.createElement('div');
@@ -55,9 +59,11 @@ function createLockOverlay(lockName: string, lockId: number, hostname: string) {
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
       </div>
       <h1 style="font-size: 1.5rem; font-weight: 700; margin-bottom: 0.5rem;">Site Locked</h1>
-      <p style="color: #6b7280; margin-bottom: 2rem;">${lockName}</p>
+      <p style="color: #6b7280; margin-bottom: 2rem;">
+        <strong>${hostname}</strong> is protected by<br>${lockName}
+      </p>
       
-      <input type="password" id="pin" placeholder="Enter PIN" style="width: 100%; padding: 0.75rem; margin-bottom: 1rem; border: 1px solid #e5e7eb; border-radius: 0.5rem; box-sizing: border-box; font-size: 1rem;">
+      <input type="password" id="pin" placeholder="Enter PIN" style="width: 100%; padding: 0.75rem; margin-bottom: 1rem; border: 1px solid #e5e7eb; border-radius: 0.5rem; box-sizing: border-box; font-size: 1rem; outline: none;">
       <button id="unlock" style="width: 100%; background: #2563eb; color: white; padding: 0.75rem; border-radius: 0.5rem; border: none; font-weight: 600; cursor: pointer; font-size: 1rem;">Unlock Access</button>
       <p id="error" style="color: #ef4444; font-size: 0.875rem; margin-top: 1rem; display: none;"></p>
     </div>
@@ -83,7 +89,7 @@ function createLockOverlay(lockName: string, lockId: number, hostname: string) {
       const response = await chrome.runtime.sendMessage({ type: 'UNLOCK_SITE', lockId, pin });
 
       if (response && response.success) {
-        // SET SESSION BYPASS BEFORE RELOAD
+        // CRITICAL: Set session bypass before reload
         sessionStorage.setItem(getSessionKey(hostname), 'true');
         
         errorMsg.textContent = '✓ Unlocked';
@@ -103,6 +109,8 @@ function createLockOverlay(lockName: string, lockId: number, hostname: string) {
       errorMsg.style.display = 'block';
       btn.textContent = 'Unlock Access';
       btn.disabled = false;
+      input.value = '';
+      input.focus();
     }
   };
 

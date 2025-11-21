@@ -1,4 +1,3 @@
-// scripts/sync-extension.mjs
 import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -49,13 +48,12 @@ async function syncExtension() {
   await ensureDistExists();
   
   // 1. Clean and Sync the Popup folder (For the React UI)
-  // This copies index.html, assets, and css
   console.log('📂 Syncing Popup files...');
   await emptyDir(popupDir);
   await copyRecursive(distDir, popupDir);
 
-  // 2. Sync Background & Content Scripts to the ROOT (Critical Fix)
-  // Chrome Manifest v3 usually expects these at the root level relative to manifest.json
+  // 2. Sync Background & Content Scripts to the ROOT
+  // This ensures Chrome loads the built version, not the old source
   console.log('📜 Syncing Core Scripts to Root...');
   const scripts = ['background.js', 'content.js'];
   
@@ -67,7 +65,7 @@ async function syncExtension() {
       await fs.copyFile(src, dest);
       console.log(`   ✅ Updated: ${script}`);
     } catch (e) {
-      console.warn(`   ⚠️ Warning: Could not copy ${script} to root (it might not exist in build).`);
+      console.warn(`   ⚠️ Warning: Could not copy ${script}. Check if vite.config.ts is correct.`);
     }
   }
   
