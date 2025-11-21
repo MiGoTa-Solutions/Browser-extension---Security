@@ -1,99 +1,74 @@
-import { AuthUser, TabLock } from '../types';
-
-const CHROME_AUTH_KEY = 'secureShield.auth';
-const CHROME_LOCKS_KEY = 'secureShield.locks';
-
-function hasChromeStorage(): boolean {
-  return typeof chrome !== 'undefined' && typeof chrome.storage?.local !== 'undefined';
+// Type definitions
+export interface CachedLock {
+  id: number;
+  name: string;
+  domains: string[]; // List of URLs/Hostnames
 }
 
-// --- Auth Helpers ---
-
-export async function writeAuthToChromeStorage(data: { token: string; user: AuthUser }): Promise<void> {
-  if (!hasChromeStorage()) return;
-
-  await new Promise<void>((resolve) => {
-    try {
-      chrome.storage.local.set({ [CHROME_AUTH_KEY]: data }, () => resolve());
-    } catch (error) {
-      console.warn('[SecureShield] Failed to persist auth data in chrome.storage', error);
-      resolve();
-    }
-  });
+export interface StorageSchema {
+  auth_token?: string;
+  locked_domains?: Record<string, number>; // hostname -> lock_id
+  lock_metadata?: Record<number, { name: string }>; // lock_id -> details
 }
 
-export async function readAuthFromChromeStorage(): Promise<{ token: string; user: AuthUser } | null> {
-  if (!hasChromeStorage()) return null;
+// 1. Save Auth Token (Call this from your Login page!)
+export const saveAuthToken = async (token: string) => {
+  await chrome.storage.local.set({ auth_token: token });
+};
 
-  return new Promise((resolve) => {
-    try {
-      chrome.storage.local.get([CHROME_AUTH_KEY], (result) => {
-        resolve((result?.[CHROME_AUTH_KEY] as { token: string; user: AuthUser }) ?? null);
-      });
-    } catch (error) {
-      console.warn('[SecureShield] Failed to read auth data from chrome.storage', error);
-      resolve(null);
-    }
-  });
-}
+// 2. Get Auth Token
+export const getAuthToken = async (): Promise<string | null> => {
+  const res = await chrome.storage.local.get('auth_token');
+  return res.auth_token || null;
+};
 
-export async function clearAuthFromChromeStorage(): Promise<void> {
-  if (!hasChromeStorage()) return;
+// 3. Sync Logic (Called by Background)
+export const updateLockCache = async (apiLocks: CachedLock[]) => {
+  const domainMap: Record<string, number> = {};
+  const metaMap: Record<number, { name: string }> = {};
 
-  await new Promise<void>((resolve) => {
-    try {
-      chrome.storage.local.remove([CHROME_AUTH_KEY, CHROME_LOCKS_KEY], () => resolve());
-    } catch (error) {
-      console.warn('[SecureShield] Failed to remove auth data from chrome.storage', error);
-      resolve();
-    }
-  });
-}
-
-// --- Lock Sync Helpers ---
-
-export interface LockedDomainCache {
-  [hostname: string]: {
-    lockId: number;
-    name: string;
-  };
-}
-
-export async function syncLocksToChromeStorage(locks: TabLock[]): Promise<void> {
-  if (!hasChromeStorage()) return;
-
-  const lockCache: LockedDomainCache = {};
-
-  locks.forEach((lock) => {
-    if (lock.status === 'locked') {
-      lock.tabs.forEach((tab) => {
-        try {
-          // Extract hostname for robust matching (remove www.)
-          const hostname = new URL(tab.url).hostname.replace(/^www\./, '');
-          lockCache[hostname] = {
-            lockId: lock.id,
-            name: lock.name,
-          };
-        } catch (e) {
-          // Ignore invalid URLs
-        }
-      });
-    }
-  });
-
-  await new Promise<void>((resolve) => {
-    chrome.storage.local.set({ [CHROME_LOCKS_KEY]: lockCache }, () => resolve());
-  });
-}
-
-export async function readLocksFromChromeStorage(): Promise<LockedDomainCache> {
-  if (!hasChromeStorage()) return {};
-
-  return new Promise((resolve) => {
-    chrome.storage.local.get([CHROME_LOCKS_KEY], (result) => {
-      resolve((result?.[CHROME_LOCKS_KEY] as LockedDomainCache) ?? {});
+  apiLocks.forEach(lock => {
+    metaMap[lock.id] = { name: lock.name };
+    
+    lock.domains.forEach(url => {
+      try {
+        // Normalize: https://www.google.com -> google.com
+        const hostname = new URL(url.startsWith('http') ? url : `https://${url}`).hostname;
+        const cleanHost = hostname.replace(/^www\./, '');
+        domainMap[cleanHost] = lock.id;
+      } catch (e) {
+        console.warn('Invalid domain in lock:', url);
+      }
     });
   });
-}
 
-export { CHROME_AUTH_KEY, CHROME_LOCKS_KEY };
+  await chrome.storage.local.set({ 
+    locked_domains: domainMap,
+    lock_metadata: metaMap 
+  });
+  
+  return { domainCount: Object.keys(domainMap).length };
+};
+
+// 4. Read Logic (Called by Content Script)
+export const getLockForDomain = async (hostname: string) => {
+  const { locked_domains, lock_metadata } = await chrome.storage.local.get(['locked_domains', 'lock_metadata']);
+  if (!locked_domains) return null;
+
+  // Simple normalization
+  const cleanHost = hostname.replace(/^www\./, '');
+  
+  // Exact match or subdomain match
+  // We search keys because we need to handle "google.com" matching "mail.google.com"
+  const foundDomain = Object.keys(locked_domains).find(key => 
+    cleanHost === key || cleanHost.endsWith('.' + key)
+  );
+
+  if (foundDomain) {
+    const lockId = locked_domains[foundDomain];
+    const meta = lock_metadata?.[lockId];
+    return { id: lockId, name: meta?.name || 'Locked Site' };
+  }
+
+  return null;
+};

@@ -1,90 +1,80 @@
-import { authApi, tabLockApi } from '../services/api';
-import { readAuthFromChromeStorage, syncLocksToChromeStorage, readLocksFromChromeStorage } from '../utils/chromeStorage';
+import { getAuthToken, updateLockCache } from '../utils/chromeStorage';
 
-chrome.runtime.onInstalled.addListener(async () => {
-  console.log('[Background] Installed. Syncing...');
-  await runLockSync();
+const API_URL = 'http://localhost:4000/api';
+
+// --- ALARM SETUP ---
+chrome.runtime.onInstalled.addListener(() => {
+  console.log('[Background] Installed. Scheduling sync.');
+  chrome.alarms.create('sync_pulse', { periodInMinutes: 1 });
+  syncLocks();
+});
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === 'sync_pulse') syncLocks();
+});
+
+// --- MESSAGE HANDLER ---
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg.type === 'UNLOCK_REQUEST') {
+    handleUnlock(msg.lockId, msg.pin)
+      .then(res => sendResponse(res));
+    return true; // Async response
+  }
   
-  // Safety check for alarms permission
-  if (chrome.alarms) {
-    chrome.alarms.create('syncLocks', { periodInMinutes: 5 });
-  } else {
-    console.warn('[Background] "alarms" permission missing. Auto-sync disabled.');
-  }
-});
-
-if (chrome.alarms) {
-  chrome.alarms.onAlarm.addListener((alarm) => {
-    if (alarm.name === 'syncLocks') runLockSync();
-  });
-}
-
-chrome.tabs.onActivated.addListener(() => {
-  runLockSync();
-});
-
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.type === 'PING') {
-    sendResponse({ pong: true });
-    return false;
-  }
-
-  if (message.type === 'UNLOCK_SITE') {
-    console.log(`[Background] Request to unlock: ${message.lockId}`);
-    handleUnlockSite(message.lockId, message.pin)
-      .then(() => sendResponse({ success: true }))
-      .catch((err) => sendResponse({ success: false, error: err.message }));
-    return true; 
-  }
-
-  if (message.type === 'CREATE_LOCK') {
-    console.log('[Background] Request to create lock');
-    handleCreateLock(message.pin, message.tabs)
-      .then(() => sendResponse({ success: true }))
-      .catch((err) => sendResponse({ success: false, error: err.message }));
+  if (msg.type === 'FORCE_SYNC') {
+    syncLocks().then(() => sendResponse({ success: true }));
     return true;
   }
-
-  return false;
 });
 
-// --- LOGIC ---
+// --- CORE FUNCTIONS ---
 
-async function runLockSync() {
+async function syncLocks() {
   try {
-    const auth = await readAuthFromChromeStorage();
-    if (!auth || !auth.token) return;
-    
-    const response = await tabLockApi.list(auth.token);
-    // Log the raw response to debug "0 locks" issue
-    console.log('[Background] API Response Locks:', response.locks); 
-    
-    await syncLocksToChromeStorage(response.locks);
-    console.log(`[Background] Synced ${response.locks.length} locks`);
-  } catch (error) {
-    console.error('[Background] Sync failed:', error);
+    const token = await getAuthToken();
+    if (!token) {
+      console.log('[Background] No auth token. Skipping sync.');
+      return;
+    }
+
+    const res = await fetch(`${API_URL}/locks`, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+
+    const data = await res.json();
+    if (data.success && Array.isArray(data.locks)) {
+      const result = await updateLockCache(data.locks);
+      console.log(`[Background] Synced successfully. Active rules: ${result.domainCount}`);
+    }
+  } catch (err) {
+    console.error('[Background] Sync failed:', err);
   }
 }
 
-async function handleUnlockSite(lockId: number, pin: string) {
-  const auth = await readAuthFromChromeStorage();
-  if (!auth?.token) throw new Error('Not authenticated');
-  await tabLockApi.unlock(auth.token, lockId, pin);
-  await runLockSync();
-}
+async function handleUnlock(lockId: number, pin: string) {
+  try {
+    const token = await getAuthToken();
+    if (!token) return { success: false, error: 'Not authenticated' };
 
-async function handleCreateLock(pin: string, tabs: any[]) {
-  const auth = await readAuthFromChromeStorage();
-  if (!auth?.token) throw new Error('You must be logged in');
+    const res = await fetch(`${API_URL}/locks/${lockId}/unlock`, {
+      method: 'POST',
+      headers: { 
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ pin })
+    });
 
-  const name = `Quick Lock: ${new URL(tabs[0].url).hostname}`;
-  
-  await tabLockApi.create(auth.token, {
-    name,
-    isGroup: false,
-    tabs,
-    pin
-  });
-  
-  await runLockSync();
+    const data = await res.json();
+    
+    if (data.success) {
+      // Immediately sync to remove the lock from cache
+      await syncLocks(); 
+      return { success: true };
+    } else {
+      return { success: false, error: data.error || 'Unlock failed' };
+    }
+  } catch (err) {
+    return { success: false, error: 'Connection error' };
+  }
 }
