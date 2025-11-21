@@ -27,18 +27,23 @@
     }
   },
   "background": {
-    "service_worker": "popup/background.js"
+    "service_worker": "popup/background.js",
+    "type": "module"
   },
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["popup/content.js"],
+      "js": ["popup/content-loader.js"],
       "run_at": "document_end"
     }
   ],
   "web_accessible_resources": [
     {
-      "resources": ["popup/assets/*"],
+      "resources": [
+        "popup/assets/*",
+        "popup/content.js",
+        "popup/background.js"
+      ],
       "matches": ["<all_urls>"]
     }
   ],

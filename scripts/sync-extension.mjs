@@ -6,9 +6,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const projectRoot = path.resolve(__dirname, '..');
 const distDir = path.join(projectRoot, 'dist');
-// The root of the extension where manifest.json lives
 const shellDir = path.join(projectRoot, 'extension-shell'); 
-// The folder where the React App (popup) lives
 const popupDir = path.join(shellDir, 'popup');
 
 async function ensureDistExists() {
@@ -47,28 +45,12 @@ async function syncExtension() {
   console.log('🔄 Starting Extension Sync...');
   await ensureDistExists();
   
-  // 1. Clean and Sync the Popup folder (For the React UI)
-  console.log('📂 Syncing Popup files...');
+  // Clean and Sync the Popup folder
+  // This places background.js, content.js, and content-loader.js inside extension-shell/popup/
+  console.log('📂 Syncing files to extension-shell/popup/ ...');
   await emptyDir(popupDir);
   await copyRecursive(distDir, popupDir);
 
-  // 2. Sync Background & Content Scripts to the ROOT
-  // This ensures Chrome loads the built version, not the old source
-  console.log('📜 Syncing Core Scripts to Root...');
-  const scripts = ['background.js', 'content.js'];
-  
-  for (const script of scripts) {
-    const src = path.join(distDir, script);
-    const dest = path.join(shellDir, script);
-    
-    try {
-      await fs.copyFile(src, dest);
-      console.log(`   ✅ Updated: ${script}`);
-    } catch (e) {
-      console.warn(`   ⚠️ Warning: Could not copy ${script}. Check if vite.config.ts is correct.`);
-    }
-  }
-  
   console.log('✨ Extension sync complete! Reload the extension in Chrome.');
 }
 
