@@ -1,11 +1,10 @@
 // src/extension/background.ts
 import { authApi, tabLockApi } from '../services/api';
-import { readAuthFromChromeStorage, syncLocksToChromeStorage, readLocksFromChromeStorage } from '../utils/chromeStorage';
+import { readAuthFromChromeStorage, syncLocksToChromeStorage } from '../utils/chromeStorage';
 
-// --- SETUP ---
 chrome.runtime.onInstalled.addListener(async () => {
+  console.log('[Background] Installed. Syncing...');
   await runLockSync();
-  // Create a backup alarm every 5 min
   chrome.alarms.create('syncLocks', { periodInMinutes: 5 });
 });
 
@@ -13,12 +12,6 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === 'syncLocks') runLockSync();
 });
 
-// Also sync when user switches tabs to ensure fresh state
-chrome.tabs.onActivated.addListener(() => {
-  runLockSync();
-});
-
-// --- MESSAGE HANDLER ---
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'PING') {
     sendResponse({ pong: true });
@@ -26,26 +19,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === 'UNLOCK_SITE') {
+    console.log(`[Background] Request to unlock: ${message.lockId}`);
     handleUnlockSite(message.lockId, message.pin)
       .then(() => sendResponse({ success: true }))
       .catch((err) => sendResponse({ success: false, error: err.message }));
-    return true; // Indicates async response
+    return true; // Async response
   }
-
   return false;
 });
-
-// --- CORE LOGIC ---
 
 async function runLockSync() {
   try {
     const auth = await readAuthFromChromeStorage();
     if (!auth || !auth.token) return;
-    
-    // Fetch fresh locks from Server
     const response = await tabLockApi.list(auth.token);
-    
-    // Update Chrome Local Storage
     await syncLocksToChromeStorage(response.locks);
     console.log(`[Background] Synced ${response.locks.length} locks`);
   } catch (error) {
@@ -57,12 +44,9 @@ async function handleUnlockSite(lockId: number, pin: string) {
   const auth = await readAuthFromChromeStorage();
   if (!auth?.token) throw new Error('Not authenticated');
 
-  // 1. Call API to update Database (Server-side)
-  // This changes status to 'unlocked' in MySQL
+  // 1. Update Database
   await tabLockApi.unlock(auth.token, lockId, pin);
   
-  // 2. IMMEDIATE SYNC (Critical)
-  // Fetch the new list (which will exclude the newly unlocked site)
-  // and update chrome.storage immediately.
+  // 2. Refresh Local Cache Immediately
   await runLockSync();
 }
