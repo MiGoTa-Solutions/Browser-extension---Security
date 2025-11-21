@@ -1,168 +1,104 @@
 import { authApi, tabLockApi } from '../services/api';
-import { readAuthFromChromeStorage, syncLocksToChromeStorage } from '../utils/chromeStorage';
+import { readAuthFromChromeStorage, syncLocksToChromeStorage, readLocksFromChromeStorage } from '../utils/chromeStorage';
 
-// ==================== LOGGING UTILITY ====================
+// --- Setup & Install ---
 
-function log(category: string, message: string, ...args: unknown[]) {
-  const timestamp = new Date().toLocaleTimeString();
-  console.log(`[${timestamp}] [${category}] ${message}`, ...args);
-}
-
-function logError(category: string, message: string, error: unknown) {
-  const timestamp = new Date().toLocaleTimeString();
-  console.error(`[${timestamp}] [${category}] ❌ ${message}`);
-  
-  if (error instanceof Error) {
-    console.error(`  → Error: ${error.message}`);
-    if (error.stack) {
-      console.error(`  → Stack:`, error.stack);
-    }
-  } else {
-    console.error(`  → Details:`, error);
-  }
-}
-
-// ==================== EVENT LISTENERS ====================
-
-// Basic install listener
-chrome.runtime.onInstalled.addListener(() => {
-  log('Background', 'SecureShield extension installed/updated');
+chrome.runtime.onInstalled.addListener(async () => {
+  console.log('[Background] SecureShield Installed');
+  await runLockSync();
+  // Setup periodic sync every 5 minutes
+  chrome.alarms.create('syncLocks', { periodInMinutes: 5 });
 });
 
-// Listen for messages from Content Script
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  const senderInfo = {
-    url: sender.tab?.url || sender.url || 'unknown',
-    tabId: sender.tab?.id || 'no-tab',
-    frameId: sender.frameId || 0
-  };
-  
-  console.log('[Background] 📨 RAW MESSAGE RECEIVED');
-  console.log('[Background] Message object:', message);
-  console.log('[Background] Sender info:', senderInfo);
-  console.log('[Background] Message type:', message?.type);
-  
-  // PING handler for testing communication
-  if (message.type === 'PING') {
-    console.log('[Background] 🏓 PING received, sending PONG');
-    sendResponse({ pong: true, timestamp: Date.now() });
-    return false; // Synchronous response
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === 'syncLocks') {
+    runLockSync();
   }
-  
-  log('Message', `Received message type: ${message.type}`, { from: sender.tab?.url || 'popup' });
-  
+});
+
+// --- Message Handling ---
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  // Log every message for debugging
+  console.log('[Background] Message received:', message.type);
+
+  if (message.type === 'PING') {
+    sendResponse({ pong: true });
+    return false;
+  }
+
   if (message.type === 'VERIFY_PIN') {
     handleVerifyPin(message.pin)
-      .then((isValid) => {
-        log('VERIFY_PIN', `PIN verification result: ${isValid ? 'VALID' : 'INVALID'}`);
-        sendResponse({ success: isValid });
-      })
-      .catch((err) => {
-        logError('VERIFY_PIN', 'PIN verification failed', err);
-        sendResponse({ success: false, error: err.message });
-      });
-    
-    // Keep the channel open for the asynchronous response
-    return true; 
+      .then((res) => sendResponse(res))
+      .catch((err) => sendResponse({ success: false, error: err.message }));
+    return true; // Async response required
   }
-  
+
   if (message.type === 'UNLOCK_SITE') {
-    log('UNLOCK_SITE', `Unlock requested for Lock ID: ${message.lockId}`);
+    console.log(`[Background] Processing UNLOCK_SITE for Lock ID: ${message.lockId}`);
     handleUnlockSite(message.lockId, message.pin)
       .then(() => {
-        log('UNLOCK_SITE', `Successfully unlocked Lock ID: ${message.lockId}`);
+        console.log('[Background] Unlock successful, sending response');
         sendResponse({ success: true });
       })
       .catch((err) => {
-        logError('UNLOCK_SITE', `Failed to unlock Lock ID: ${message.lockId}`, err);
+        console.error('[Background] Unlock failed:', err);
         sendResponse({ success: false, error: err.message });
       });
-    
-    return true;
+    return true; // Async response required
   }
   
-  console.error('[Background] ⚠️ Unknown message type received:', message.type);
-  console.error('[Background] Full message object:', message);
-  log('Message', `Unknown message type: ${message.type}`);
-  sendResponse({ success: false, error: 'Unknown message type' });
   return false;
 });
 
-// ==================== MESSAGE HANDLERS ====================
+// --- Navigation Listener (The "Locking" Logic) ---
 
-async function handleVerifyPin(pin: string): Promise<boolean> {
-  const auth = await readAuthFromChromeStorage();
-  
-  if (!auth || !auth.token) {
-    log('VERIFY_PIN', 'Failed: User not authenticated');
-    return false;
+chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
+  if (changeInfo.status === 'complete' && tab.url) {
+    const locks = await readLocksFromChromeStorage();
+    const hostname = new URL(tab.url).hostname.replace(/^www\./, '');
+    
+    if (locks[hostname]) {
+      console.log(`[Background] 🔒 Navigation check: Locked site detected (${hostname})`);
+    }
   }
+});
 
-  log('VERIFY_PIN', 'Verifying PIN with server...');
-  
+// --- Action Handlers ---
+
+async function runLockSync() {
   try {
-    await authApi.verifyPin(auth.token, { pin });
-    log('VERIFY_PIN', 'PIN verified successfully');
-    return true;
+    const auth = await readAuthFromChromeStorage();
+    if (!auth || !auth.token) return;
+    
+    const response = await tabLockApi.list(auth.token);
+    await syncLocksToChromeStorage(response.locks);
+    console.log(`[Background] ✅ Synced ${response.locks.length} locks from database`);
   } catch (error) {
-    logError('VERIFY_PIN', 'Verification request failed', error);
-    return false;
+    console.error('[Background] Sync failed:', error);
   }
 }
 
-async function handleUnlockSite(lockId: number, pin: string): Promise<void> {
+async function handleVerifyPin(pin: string) {
   const auth = await readAuthFromChromeStorage();
+  if (!auth?.token) throw new Error('Not authenticated');
   
-  if (!auth || !auth.token) {
-    const error = 'User not authenticated - please sign in';
-    log('UNLOCK_SITE', error);
-    throw new Error(error);
-  }
+  await authApi.verifyPin(auth.token, { pin });
+  return { success: true };
+}
 
-  log('UNLOCK_SITE', `Starting unlock process for Lock ID: ${lockId}`);
+async function handleUnlockSite(lockId: number, pin: string) {
+  const auth = await readAuthFromChromeStorage();
+  if (!auth?.token) throw new Error('Not authenticated');
+
+  // 1. Call API to unlock
+  await tabLockApi.unlock(auth.token, lockId, pin);
   
-  try {
-    // Step 1: Call API to update database status to 'unlocked'
-    log('UNLOCK_SITE', 'Step 1/3: Calling unlock API endpoint...');
-    const response = await tabLockApi.unlock(auth.token, lockId, pin);
-    log('UNLOCK_SITE', 'Step 1/3: API unlock successful', {
-      lockId: response.lock.id,
-      name: response.lock.name,
-      status: response.lock.status,
-    });
-    
-    // Step 2: Fetch all locks from server
-    log('UNLOCK_SITE', 'Step 2/3: Fetching updated locks list...');
-    const allLocks = await tabLockApi.list(auth.token);
-    log('UNLOCK_SITE', `Step 2/3: Retrieved ${allLocks.locks.length} locks from server`);
-    
-    // Step 3: Sync to chrome.storage (removes unlocked domains from cache)
-    log('UNLOCK_SITE', 'Step 3/3: Syncing to chrome.storage...');
-    await syncLocksToChromeStorage(allLocks.locks);
-    log('UNLOCK_SITE', '✅ Chrome storage synced - unlocked site removed from cache');
-    
-    log('UNLOCK_SITE', `✅ Unlock completed successfully for Lock ID: ${lockId}`);
-  } catch (error) {
-    // Provide context-specific error messages
-    if (error instanceof Error) {
-      if (error.message.includes('Incorrect PIN')) {
-        logError('UNLOCK_SITE', 'Incorrect PIN provided', error);
-        throw new Error('Incorrect PIN - please try again');
-      } else if (error.message.includes('fetch')) {
-        logError('UNLOCK_SITE', 'Network error - server may be down', error);
-        throw new Error('Cannot reach server - ensure the backend is running on http://localhost:4000');
-      } else if (error.message.includes('401')) {
-        logError('UNLOCK_SITE', 'Authentication failed - token expired', error);
-        throw new Error('Session expired - please sign in again');
-      } else {
-        logError('UNLOCK_SITE', 'Unexpected error during unlock', error);
-        throw error;
-      }
-    } else {
-      logError('UNLOCK_SITE', 'Unknown error type', error);
-      throw new Error('Unlock failed - check console for details');
-    }
-  }
+  // 2. Fetch updated list immediately
+  const listResponse = await tabLockApi.list(auth.token);
+  
+  // 3. Update Chrome Storage (This removes the lock from the local cache)
+  await syncLocksToChromeStorage(listResponse.locks);
 }
 
 export {};
