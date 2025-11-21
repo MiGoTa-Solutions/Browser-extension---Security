@@ -1,35 +1,51 @@
 import { readLocksFromChromeStorage } from '../utils/chromeStorage';
 
-// Check if current site is locked
+// ==================== HELPER: SESSION BYPASS ====================
+// This prevents the "Unlock -> Reload -> Lock Again" loop
+const SESSION_UNLOCK_KEY = `secureShield_unlocked_${window.location.hostname}`;
+
+function isSessionUnlocked(): boolean {
+  return sessionStorage.getItem(SESSION_UNLOCK_KEY) === 'true';
+}
+
+function setSessionUnlocked() {
+  sessionStorage.setItem(SESSION_UNLOCK_KEY, 'true');
+}
+
+// ==================== MAIN LOGIC ====================
+
 async function checkLockStatus() {
+  // 1. Check for immediate session bypass (Optimistic Unlock)
+  if (isSessionUnlocked()) {
+    console.log('[Content] 🔓 Session is temporarily unlocked (Bypass active)');
+    return; 
+  }
+
   const hostname = window.location.hostname.replace(/^www\./, '');
   const locks = await readLocksFromChromeStorage();
   
-  console.log('[Content Script] Checking lock status for:', hostname);
-  console.log('[Content Script] Locked sites in storage:', Object.keys(locks));
+  console.log('[Content] Checking lock status for:', hostname);
   
   if (locks[hostname]) {
-    console.log('[Content Script] 🔒 Site is LOCKED - Lock ID:', locks[hostname].lockId, 'Name:', locks[hostname].name);
+    console.log('[Content] 🔒 Site is LOCKED:', locks[hostname].name);
     createLockOverlay(locks[hostname].name, locks[hostname].lockId);
   } else {
-    console.log('[Content Script] ✅ Site is NOT locked - access granted');
+    console.log('[Content] ✅ Site is NOT locked');
   }
 }
 
 function createLockOverlay(lockName: string, lockId: number) {
-  // Avoid duplicate overlays
   if (document.getElementById('secureshield-overlay')) return;
 
-  // Create Overlay
   const overlay = document.createElement('div');
   overlay.id = 'secureshield-overlay';
   
-  // Styling (matching Migota Blue/Clean theme)
+  // Overlay Styling
   overlay.style.cssText = `
     position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
-    background-color: rgba(243, 244, 246, 0.98); /* gray-100 with high opacity */
+    background-color: rgba(243, 244, 246, 0.98);
     z-index: 2147483647; display: flex; justify-content: center; align-items: center;
-    font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    font-family: ui-sans-serif, system-ui, sans-serif;
   `;
 
   overlay.innerHTML = `
@@ -45,16 +61,12 @@ function createLockOverlay(lockName: string, lockId: number) {
 
       <div style="margin-bottom: 1rem;">
         <input type="password" id="ss-pin-input" placeholder="Enter Security PIN" 
-          style="width: 100%; padding: 0.75rem; border: 1px solid #e5e7eb; border-radius: 0.5rem; font-size: 1rem; outline: none; transition: border-color 0.2s;"
+          style="width: 100%; padding: 0.75rem; border: 1px solid #e5e7eb; border-radius: 0.5rem; font-size: 1rem; outline: none;"
         />
       </div>
 
-      <button id="ss-unlock-btn" style="width: 100%; background: #2563eb; color: white; padding: 0.75rem; border-radius: 0.5rem; font-weight: 600; border: none; cursor: pointer; transition: background 0.2s;">
+      <button id="ss-unlock-btn" style="width: 100%; background: #2563eb; color: white; padding: 0.75rem; border-radius: 0.5rem; font-weight: 600; border: none; cursor: pointer;">
         Unlock Access
-      </button>
-      
-      <button id="ss-ping-btn" style="width: 100%; background: #6b7280; color: white; padding: 0.5rem; border-radius: 0.5rem; font-weight: 500; border: none; cursor: pointer; margin-top: 0.5rem; font-size: 0.875rem;">
-        Test Connection (PING)
       </button>
       
       <p id="ss-error-msg" style="color: #ef4444; font-size: 0.875rem; margin-top: 1rem; display: none;"></p>
@@ -62,111 +74,97 @@ function createLockOverlay(lockName: string, lockId: number) {
   `;
 
   document.body.appendChild(overlay);
-  document.body.style.overflow = 'hidden'; // Prevent scrolling
+  document.body.style.overflow = 'hidden';
 
-  // Event Listeners
   const input = document.getElementById('ss-pin-input') as HTMLInputElement;
   const btn = document.getElementById('ss-unlock-btn');
-  const pingBtn = document.getElementById('ss-ping-btn');
   const errorMsg = document.getElementById('ss-error-msg');
 
   if (input) input.focus();
-  
-  // Test PING handler
-  const handlePing = async () => {\n    if (!errorMsg) return;\n    console.log('[Content] 🏓 PING button clicked');\n    \n    try {\n      console.log('[Content] Sending PING message...');\n      const response = await chrome.runtime.sendMessage({ type: 'PING' });\n      console.log('[Content] ✅ PING response:', response);\n      \n      if (response?.pong) {\n        errorMsg.textContent = `✓ Connection OK (${response.timestamp})`;\n        errorMsg.style.color = '#10b981';\n        errorMsg.style.display = 'block';\n        setTimeout(() => {\n          errorMsg.style.display = 'none';\n        }, 3000);\n      } else {\n        errorMsg.textContent = '⚠️ Unexpected PING response';\n        errorMsg.style.color = '#f59e0b';\n        errorMsg.style.display = 'block';\n      }\n    } catch (e) {\n      console.error('[Content] ❌ PING FAILED:', e);\n      errorMsg.textContent = `❌ Connection failed: ${e instanceof Error ? e.message : 'Unknown error'}`;\n      errorMsg.style.color = '#ef4444';\n      errorMsg.style.display = 'block';\n    }\n  };
 
-  const handleUnlock = async () => {
-    console.log('[Content] 🔘 Unlock button clicked');
-    
-    if (!input || !errorMsg || !btn) {
-      console.error('[Content] ❌ UI elements missing:', { input: !!input, errorMsg: !!errorMsg, btn: !!btn });
-      return;
+  // --- UNLOCK HANDLER ---
+  // Accepts the event 'e' to prevent default browser behavior
+  const handleUnlock = async (e?: Event) => {
+    // 1. STOP AUTO-RELOAD
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
     }
+
+    if (!input || !btn || !errorMsg) return;
     
     const pin = input.value;
-    console.log('[Content] Unlock attempt - Lock ID:', lockId, 'PIN length:', pin.length);
-    
     if (pin.length < 4) {
       errorMsg.textContent = 'PIN must be at least 4 digits';
       errorMsg.style.display = 'block';
-      console.log('[Content Script] ❌ PIN too short');
       return;
     }
 
     // UI Loading State
-    const originalBtnText = btn.textContent;
+    const originalText = btn.textContent;
     btn.textContent = 'Verifying...';
     btn.setAttribute('disabled', 'true');
     errorMsg.style.display = 'none';
 
-    const payload = { 
-      type: 'UNLOCK_SITE', 
-      lockId: lockId,
-      pin 
-    };
-    console.log('[Content] 📤 Sending payload to background:', payload);
-    console.log('[Content] Extension ID:', chrome.runtime.id);
-    
     try {
-      // Check if runtime is available
-      if (!chrome.runtime || !chrome.runtime.sendMessage) {
-        throw new Error('chrome.runtime.sendMessage is not available - extension context may be invalidated');
+      // 2. Check Connection
+      if (!chrome.runtime?.id) {
+        throw new Error('Extension disconnected. Please refresh the page manually.');
       }
-      
-      console.log('[Content] Calling chrome.runtime.sendMessage...');
-      const response = await chrome.runtime.sendMessage(payload);
-      console.log('[Content] 📥 Response received:', response);
+
+      console.log('[Content] 📤 Sending UNLOCK_SITE...');
+      const response = await chrome.runtime.sendMessage({ 
+        type: 'UNLOCK_SITE', 
+        lockId, 
+        pin 
+      });
+
+      console.log('[Content] 📥 Response:', response);
 
       if (response && response.success) {
-        console.log('[Content] ✅ Unlock successful! Removing overlay and reloading...');
-        // Success: overlay removed, storage updated, DB unlocked
-        errorMsg.textContent = '✓ Unlocked! Reloading...';
+        // 3. SET SESSION BYPASS (Critical Fix for Reload Loop)
+        setSessionUnlocked();
+
+        errorMsg.textContent = '✓ Unlocked!';
         errorMsg.style.color = '#10b981';
         errorMsg.style.display = 'block';
         
-        overlay.remove();
-        document.body.style.overflow = '';
-        
-        // Reload to show unlocked content
         setTimeout(() => {
+          overlay.remove();
+          document.body.style.overflow = '';
           window.location.reload();
-        }, 300);
+        }, 500);
       } else {
-        console.error('[Content] ❌ Unlock failed - Response:', response);
-        const errorText = response?.error || 'Unlock failed - no error message';
-        errorMsg.textContent = errorText;
-        errorMsg.style.display = 'block';
-        input.value = '';
-        input.focus();
-        // DO NOT RELOAD - keep overlay visible to show error
+        throw new Error(response?.error || 'Incorrect PIN');
       }
     } catch (e) {
-      console.error('[Content] ❌ MESSAGE SEND FAILED:', e);
-      console.error('[Content] Error type:', e instanceof Error ? e.constructor.name : typeof e);
-      console.error('[Content] Error message:', e instanceof Error ? e.message : String(e));
-      console.error('[Content] Error stack:', e instanceof Error ? e.stack : 'N/A');
+      console.error('[Content] ❌ Unlock Error:', e);
+      const msg = e instanceof Error ? e.message : 'Unknown error';
       
-      // Display detailed error on overlay
-      const errorMessage = e instanceof Error ? e.message : 'Unknown error during message send';
-      errorMsg.innerHTML = `<strong>Message Send Failed:</strong><br>${errorMessage}<br><br><small>Check Service Worker console for details</small>`;
-      errorMsg.style.display = 'block';
-      errorMsg.style.fontSize = '0.75rem';
-      
-      // DO NOT RELOAD - keep overlay visible to show error
-    } finally {
-      btn.textContent = originalBtnText;
-      btn.removeAttribute('disabled');
+      if (msg.includes('invalidated') || msg.includes('context')) {
+        errorMsg.textContent = 'Extension updated. Reloading page...';
+        setTimeout(() => window.location.reload(), 1000);
+      } else {
+        errorMsg.textContent = msg;
+        errorMsg.style.color = '#ef4444';
+        errorMsg.style.display = 'block';
+        btn.textContent = originalText;
+        btn.removeAttribute('disabled');
+        input.value = '';
+        input.focus();
+      }
     }
   };
 
   btn?.addEventListener('click', handleUnlock);
-  pingBtn?.addEventListener('click', handlePing);
+  
+  // Pass 'e' to handleUnlock
   input?.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') handleUnlock();
+    if (e.key === 'Enter') {
+      handleUnlock(e); 
+    }
   });
 }
 
 // Initial check
 checkLockStatus();
-
-export {};
