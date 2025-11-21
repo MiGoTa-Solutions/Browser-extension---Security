@@ -1,7 +1,7 @@
 import { ReactNode, createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { authApi } from '../services/api';
 import { AuthUser } from '../types';
-import { clearAuthFromChromeStorage, readAuthFromChromeStorage, writeAuthToChromeStorage } from '../utils/chromeStorage';
+import { clearAuthToken, getAuthToken, saveAuthToken } from '../utils/chromeStorage';
 
 interface AuthState {
   user: AuthUser | null;
@@ -21,96 +21,89 @@ const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 const STORAGE_KEY = 'secureShield.auth';
 
-function persistAuthState(data: { token: string; user: AuthUser }) {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-  } catch (error) {
-    console.warn('Failed to persist auth state', error);
+// Helper to notify Background Script to sync immediately
+const notifyExtension = () => {
+  if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+    chrome.runtime.sendMessage({ type: 'FORCE_SYNC' }).catch(() => {
+      // Ignore errors if extension context is invalid (e.g., running in normal web page)
+    });
   }
-
-  void writeAuthToChromeStorage(data);
-}
-
-function readPersistedAuthState(): { token: string; user: AuthUser } | null {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? (JSON.parse(raw) as { token: string; user: AuthUser }) : null;
-  } catch (error) {
-    console.warn('Failed to read persisted auth state', error);
-    return null;
-  }
-}
+};
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AuthState>({ user: null, token: null, loading: true });
 
+  // 1. Initialize Auth State
   useEffect(() => {
-    let mounted = true;
-
     const bootstrap = async () => {
-      let persisted = readPersistedAuthState();
-
-      if (!persisted) {
-        persisted = await readAuthFromChromeStorage();
-        if (persisted) {
-          persistAuthState(persisted);
-        }
-      }
-
-      if (!persisted) {
-        if (mounted) {
-          setState((prev) => ({ ...prev, loading: false }));
-        }
-        return;
-      }
-
       try {
-        const response = await authApi.me(persisted.token);
-        if (!mounted) return;
-        const syncedState = { token: persisted.token, user: response.user };
-        persistAuthState(syncedState);
-        setState({ user: response.user, token: persisted.token, loading: false });
-      } catch {
-        localStorage.removeItem(STORAGE_KEY);
-        await clearAuthFromChromeStorage();
-        if (mounted) {
+        // First, check LocalStorage (Fastest)
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          setState({ user: parsed.user, token: parsed.token, loading: false });
+          // Ensure Chrome Storage is in sync
+          if (parsed.token) saveAuthToken(parsed.token);
+          return;
+        }
+
+        // Fallback: Check Chrome Storage (in case user logged in via another view)
+        const chromeToken = await getAuthToken();
+        if (chromeToken) {
+          const response = await authApi.me(chromeToken);
+          localStorage.setItem(STORAGE_KEY, JSON.stringify({ token: chromeToken, user: response.user }));
+          setState({ user: response.user, token: chromeToken, loading: false });
+        } else {
           setState({ user: null, token: null, loading: false });
         }
+      } catch (error) {
+        console.error('Auth bootstrap failed:', error);
+        localStorage.removeItem(STORAGE_KEY);
+        clearAuthToken();
+        setState({ user: null, token: null, loading: false });
       }
     };
 
     bootstrap();
-
-    return () => {
-      mounted = false;
-    };
   }, []);
 
+  // 2. Auth Actions
   const login = async (email: string, password: string) => {
     const response = await authApi.login({ email, password });
-    persistAuthState(response);
+    
+    // Save to LocalStorage (For React UI)
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(response));
+    
+    // Save to Chrome Storage (For Background Script)
+    await saveAuthToken(response.token);
+    
     setState({ user: response.user, token: response.token, loading: false });
+    notifyExtension();
   };
 
   const register = async (payload: { email: string; password: string; pin?: string }) => {
     const response = await authApi.register(payload);
-    persistAuthState(response);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(response));
+    await saveAuthToken(response.token);
     setState({ user: response.user, token: response.token, loading: false });
+    notifyExtension();
   };
 
   const logout = () => {
     localStorage.removeItem(STORAGE_KEY);
-    void clearAuthFromChromeStorage();
+    clearAuthToken();
     setState({ user: null, token: null, loading: false });
+    notifyExtension();
   };
 
   const setPin = async (pin: string) => {
     if (!state.token) throw new Error('Not authenticated');
     await authApi.setPin(state.token, { pin });
+    
     setState((prev) => {
       if (!prev.user || !prev.token) return prev;
-      const updatedUser = { ...prev.user, hasPin: true } satisfies AuthUser;
-      persistAuthState({ token: prev.token, user: updatedUser });
+      const updatedUser = { ...prev.user, hasPin: true };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ token: prev.token, user: updatedUser }));
       return { ...prev, user: updatedUser };
     });
   };
@@ -120,23 +113,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await authApi.verifyPin(state.token, { pin });
   };
 
-  const value = useMemo<AuthContextValue>(() => ({
-    ...state,
-    login,
-    register,
-    logout,
-    setPin,
-    verifyPin,
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [state.user, state.token, state.loading]);
+  const value = useMemo(() => ({
+    ...state, login, register, logout, setPin, verifyPin
+  }), [state]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
 export function useAuth() {
   const context = useContext(AuthContext);
-  if (!context) {
-    throw new Error('useAuth must be used within AuthProvider');
-  }
+  if (!context) throw new Error('useAuth must be used within AuthProvider');
   return context;
 }

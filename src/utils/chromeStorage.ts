@@ -1,28 +1,45 @@
-// Type definitions
+import { AuthUser, TabLock } from '../types';
+
+// ==================== TYPES ====================
+
 export interface CachedLock {
   id: number;
   name: string;
-  domains: string[]; // List of URLs/Hostnames
+  domains: string[];
 }
 
 export interface StorageSchema {
   auth_token?: string;
-  locked_domains?: Record<string, number>; // hostname -> lock_id
-  lock_metadata?: Record<number, { name: string }>; // lock_id -> details
+  locked_domains?: Record<string, number>;
+  lock_metadata?: Record<number, { name: string }>;
 }
 
-// 1. Save Auth Token (Call this from your Login page!)
-export const saveAuthToken = async (token: string) => {
-  await chrome.storage.local.set({ auth_token: token });
+// ==================== AUTH HELPERS ====================
+
+/**
+ * Save the Auth Token so the Background Script can read it.
+ * Note: We only store the token in Chrome Storage. User details stay in LocalStorage.
+ */
+export const saveAuthToken = async (token: string): Promise<void> => {
+  if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+    await chrome.storage.local.set({ auth_token: token });
+  }
 };
 
-// 2. Get Auth Token
 export const getAuthToken = async (): Promise<string | null> => {
+  if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.local) return null;
   const res = await chrome.storage.local.get('auth_token');
   return res.auth_token || null;
 };
 
-// 3. Sync Logic (Called by Background)
+export const clearAuthToken = async (): Promise<void> => {
+  if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+    await chrome.storage.local.remove('auth_token');
+  }
+};
+
+// ==================== LOCK HELPERS ====================
+
 export const updateLockCache = async (apiLocks: CachedLock[]) => {
   const domainMap: Record<string, number> = {};
   const metaMap: Record<number, { name: string }> = {};
@@ -50,16 +67,15 @@ export const updateLockCache = async (apiLocks: CachedLock[]) => {
   return { domainCount: Object.keys(domainMap).length };
 };
 
-// 4. Read Logic (Called by Content Script)
 export const getLockForDomain = async (hostname: string) => {
+  if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.local) return null;
+
   const { locked_domains, lock_metadata } = await chrome.storage.local.get(['locked_domains', 'lock_metadata']);
   if (!locked_domains) return null;
 
-  // Simple normalization
   const cleanHost = hostname.replace(/^www\./, '');
   
-  // Exact match or subdomain match
-  // We search keys because we need to handle "google.com" matching "mail.google.com"
+  // Check for exact match or subdomain match
   const foundDomain = Object.keys(locked_domains).find(key => 
     cleanHost === key || cleanHost.endsWith('.' + key)
   );
