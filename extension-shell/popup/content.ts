@@ -1,6 +1,19 @@
 /// <reference types="chrome" />
 
-import { TabInfo, TabLock } from '../src/types';
+interface TabInfo {
+	title: string;
+	url: string;
+}
+
+interface TabLock {
+	id: number;
+	name: string;
+	isGroup: boolean;
+	tabs: TabInfo[];
+	createdAt: string;
+	lockedAt?: string;
+	note?: string;
+}
 
 const BUTTON_ID = 'secureshield-floating-lock-button';
 const MODAL_ID = 'secureshield-lock-modal';
@@ -367,6 +380,51 @@ async function isCurrentSiteLocked(): Promise<{ locked: boolean; pin?: string; l
 			min-height: 18px;
 		}
 
+		/* AI Analysis Modal Styles */
+		#secureshield-ai-analysis-modal,
+		#secureshield-analysis-results,
+		#secureshield-chat-modal {
+			position: fixed;
+			inset: 0;
+			background: rgba(15, 23, 42, 0.6);
+			backdrop-filter: blur(6px);
+			z-index: 2147483600;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			padding: 16px;
+		}
+
+		.ss-btn-primary {
+			background: linear-gradient(135deg, #2563eb, #7c3aed);
+			color: #fff;
+			border: none;
+			border-radius: 10px;
+			padding: 10px 18px;
+			font-weight: 600;
+			cursor: pointer;
+			transition: transform 0.2s ease;
+		}
+
+		.ss-btn-primary:hover {
+			transform: translateY(-1px);
+		}
+
+		.ss-btn-secondary {
+			background: #e2e8f0;
+			color: #0f172a;
+			border: none;
+			border-radius: 10px;
+			padding: 10px 18px;
+			font-weight: 600;
+			cursor: pointer;
+			transition: background 0.2s ease;
+		}
+
+		.ss-btn-secondary:hover {
+			background: #cbd5e1;
+		}
+
 		#${PAGE_OVERLAY_ID} {
 			position: fixed;
 			inset: 0;
@@ -419,9 +477,82 @@ function removeFloatingButton() {
 	document.getElementById(BUTTON_ID)?.remove();
 }
 
-function openLockModal() {
-	// First show AI analysis, then lock modal
+async function checkIfDomainAlreadyLocked(url: string): Promise<{ isDuplicate: boolean; lockId: number | null; hostname: string | null }> {
+	return new Promise((resolve) => {
+		chrome.runtime.sendMessage(
+			{ action: 'CHECK_DUPLICATE', payload: { url } },
+			(response: { success: boolean; data?: { isDuplicate: boolean; lockId: number | null; hostname: string | null }; error?: string }) => {
+				if (response?.success && response.data) {
+					resolve(response.data);
+				} else {
+					resolve({ isDuplicate: false, lockId: null, hostname: null });
+				}
+			}
+		);
+	});
+}
+
+async function openLockModal() {
+	// First check if this domain is already locked
+	const currentUrl = window.location.href;
+	const duplicateCheck = await checkIfDomainAlreadyLocked(currentUrl);
+	
+	if (duplicateCheck.isDuplicate) {
+		showAlreadyLockedModal(duplicateCheck.hostname || currentUrl, duplicateCheck.lockId);
+		return;
+	}
+	
+	// If not locked, proceed with AI analysis
 	showAIAnalysisModal();
+}
+
+function showAlreadyLockedModal(hostname: string, lockId: number | null) {
+	if (document.getElementById('secureshield-already-locked-modal')) return;
+	
+	const overlay = document.createElement('div');
+	overlay.id = 'secureshield-already-locked-modal';
+	overlay.style.cssText = `
+		position: fixed;
+		inset: 0;
+		background: rgba(15, 23, 42, 0.6);
+		backdrop-filter: blur(6px);
+		z-index: 2147483600;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		padding: 16px;
+	`;
+	overlay.innerHTML = `
+		<div class="ss-modal-card" style="max-width: 500px; background: #fff; border-radius: 20px; padding: 32px; font-family: system-ui, sans-serif; text-align: center;">
+			<div style="font-size: 64px; margin-bottom: 20px;">⚠️</div>
+			<h2 style="color: #dc2626; margin-bottom: 16px; font-size: 24px; font-weight: 700;">Already Locked</h2>
+			<p style="color: #6b7280; font-size: 15px; line-height: 1.6; margin-bottom: 24px;">
+				This website is already locked by SecureShield.
+				<br/><br/>
+				<strong style="color: #1f2937;">${hostname}</strong>
+				${lockId ? `<br/><span style="font-size: 13px; color: #9ca3af;">(Lock ID: ${lockId})</span>` : ''}
+			</p>
+			<p style="color: #6b7280; font-size: 14px; line-height: 1.6; margin-bottom: 28px;">
+				To lock this site again, you must first unlock it from the SecureShield extension's Web Access Lock page.
+			</p>
+			<button 
+				id="secureshield-understood-btn"
+				style="background: linear-gradient(135deg, #2563eb, #7c3aed); color: #fff; border: none; border-radius: 12px; padding: 12px 28px; font-weight: 600; cursor: pointer; font-size: 15px; width: 100%;"
+			>
+				Understood
+			</button>
+		</div>
+	`;
+	
+	document.body.appendChild(overlay);
+	
+	document.getElementById('secureshield-understood-btn')?.addEventListener('click', () => {
+		overlay.remove();
+	});
+	
+	overlay.addEventListener('click', (e) => {
+		if (e.target === overlay) overlay.remove();
+	});
 }
 
 function showAIAnalysisModal() {
@@ -429,11 +560,22 @@ function showAIAnalysisModal() {
 	
 	const loadingOverlay = document.createElement('div');
 	loadingOverlay.id = 'secureshield-ai-analysis-modal';
+	loadingOverlay.style.cssText = `
+		position: fixed;
+		inset: 0;
+		background: rgba(15, 23, 42, 0.6);
+		backdrop-filter: blur(6px);
+		z-index: 2147483600;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		padding: 16px;
+	`;
 	loadingOverlay.innerHTML = `
-		<div class="ss-modal-card" style="max-width: 600px;">
+		<div class="ss-modal-card" style="max-width: 600px; background: #fff; border-radius: 20px; padding: 28px; font-family: system-ui, sans-serif;">
 			<div style="text-align: center; padding: 40px;">
 				<div style="display: inline-block; width: 50px; height: 50px; border: 4px solid #f3f3f3; border-top: 4px solid #2563eb; border-radius: 50%; animation: spin 1s linear infinite;"></div>
-				<p style="margin-top: 20px; color: #6b7280;">Analyzing website with AI...</p>
+				<p style="margin-top: 20px; color: #6b7280; font-size: 15px;">Analyzing website with AI...</p>
 			</div>
 		</div>
 	`;
@@ -455,35 +597,46 @@ function showAnalysisResults(analysis: { description: string; pros: string[]; co
 	
 	const overlay = document.createElement('div');
 	overlay.id = 'secureshield-analysis-results';
+	overlay.style.cssText = `
+		position: fixed;
+		inset: 0;
+		background: rgba(15, 23, 42, 0.6);
+		backdrop-filter: blur(6px);
+		z-index: 2147483600;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		padding: 16px;
+	`;
 	overlay.innerHTML = `
 		<div class="ss-modal-card" style="max-width: 700px; max-height: 90vh; overflow-y: auto;">
-			<h2 style="color: #2563eb; margin-bottom: 16px;">🤖 AI Analysis</h2>
+			<h2 style="color: #2563eb; margin-bottom: 16px; font-family: system-ui, sans-serif;">🤖 AI Analysis</h2>
 			
 			<div style="background: #f9fafb; padding: 16px; border-radius: 8px; margin-bottom: 20px;">
-				<h3 style="color: #1f2937; font-size: 14px; margin-bottom: 8px;">Website Overview</h3>
-				<p style="color: #6b7280; font-size: 14px; line-height: 1.6;">${analysis.description}</p>
+				<h3 style="color: #1f2937; font-size: 14px; margin: 0 0 8px 0; font-weight: 600;">Website Overview</h3>
+				<p style="color: #6b7280; font-size: 14px; line-height: 1.6; margin: 0;">${analysis.description}</p>
 			</div>
 			
 			<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 24px;">
 				<div style="background: #ecfdf5; padding: 16px; border-radius: 8px; border-left: 4px solid #10b981;">
-					<h3 style="color: #065f46; font-size: 14px; margin-bottom: 12px;">✅ Advantages of Locking</h3>
+					<h3 style="color: #065f46; font-size: 14px; margin: 0 0 12px 0; font-weight: 600;">✅ Advantages of Locking</h3>
 					<ul style="padding-left: 20px; margin: 0; color: #047857; font-size: 13px; line-height: 1.8;">
 						${analysis.pros.map(pro => `<li>${pro}</li>`).join('')}
 					</ul>
 				</div>
 				
 				<div style="background: #fef2f2; padding: 16px; border-radius: 8px; border-left: 4px solid #ef4444;">
-					<h3 style="color: #991b1b; font-size: 14px; margin-bottom: 12px;">⚠️ Disadvantages of Locking</h3>
+					<h3 style="color: #991b1b; font-size: 14px; margin: 0 0 12px 0; font-weight: 600;">⚠️ Disadvantages of Locking</h3>
 					<ul style="padding-left: 20px; margin: 0; color: #b91c1c; font-size: 13px; line-height: 1.8;">
 						${analysis.cons.map(con => `<li>${con}</li>`).join('')}
 					</ul>
 				</div>
 			</div>
 			
-			<div class="ss-modal-actions">
-				<button class="ss-btn-secondary" id="secureshield-analysis-cancel">Cancel</button>
-				<button class="ss-btn-secondary" id="secureshield-chat-ai">💬 Chat with AI</button>
-				<button class="ss-btn-primary" id="secureshield-analysis-proceed">🔒 Proceed to Lock</button>
+			<div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 24px;">
+				<button class="ss-btn-secondary" id="secureshield-analysis-cancel" style="background: #e2e8f0; color: #0f172a; border: none; border-radius: 10px; padding: 10px 18px; font-weight: 600; cursor: pointer; font-family: system-ui, sans-serif;">Cancel</button>
+				<button class="ss-btn-secondary" id="secureshield-chat-ai" style="background: #e2e8f0; color: #0f172a; border: none; border-radius: 10px; padding: 10px 18px; font-weight: 600; cursor: pointer; font-family: system-ui, sans-serif;">💬 Chat with AI</button>
+				<button class="ss-btn-primary" id="secureshield-analysis-proceed" style="background: linear-gradient(135deg, #2563eb, #7c3aed); color: #fff; border: none; border-radius: 10px; padding: 10px 18px; font-weight: 600; cursor: pointer; font-family: system-ui, sans-serif;">🔒 Proceed to Lock</button>
 			</div>
 		</div>
 	`;
@@ -816,6 +969,9 @@ async function renderPasswordProtectedOverlay() {
 	const unlockBtn = document.getElementById('ss-unlock-btn') as HTMLButtonElement;
 	const errorDiv = document.getElementById('ss-pin-error') as HTMLDivElement;
 	
+	// Track if the site has been unlocked
+	let unlocked = false;
+	
 	const handleUnlock = async () => {
 		const enteredPin = pinInput?.value || '';
 		if (!enteredPin) {
@@ -824,6 +980,9 @@ async function renderPasswordProtectedOverlay() {
 		}
 		
 		if (enteredPin === lockStatus.pin) {
+			// Mark as unlocked to stop the guard
+			unlocked = true;
+			
 			// Correct PIN - reload the page to show content
 			document.getElementById('ss-hide-content')?.remove();
 			document.documentElement.style.overflow = '';
@@ -864,6 +1023,38 @@ async function renderPasswordProtectedOverlay() {
 	}
 	
 	pinInput?.focus();
+	
+	// SECURITY: Continuously monitor and prevent overlay removal
+	// This ensures the site remains locked even if user tries to manipulate the DOM
+	const overlayGuard = setInterval(() => {
+		if (unlocked) {
+			clearInterval(overlayGuard);
+			return;
+		}
+		
+		// If overlay is removed by user manipulation, re-add it immediately
+		if (!document.getElementById(PAGE_OVERLAY_ID)) {
+			console.warn('[SecureShield] Security violation detected: Overlay removed. Re-applying lock...');
+			clearInterval(overlayGuard);
+			renderPasswordProtectedOverlay();
+			return;
+		}
+		
+		// Ensure hide style is still active
+		if (!document.getElementById('ss-hide-content')) {
+			const hideStyle = document.createElement('style');
+			hideStyle.id = 'ss-hide-content';
+			hideStyle.textContent = `
+				body > *:not(#${PAGE_OVERLAY_ID}) {
+					display: none !important;
+				}
+				body {
+					overflow: hidden !important;
+				}
+			`;
+			document.head?.appendChild(hideStyle);
+		}
+	}, 500); // Check every 500ms
 }
 
 export {};

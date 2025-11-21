@@ -18,6 +18,7 @@ type TabLockAction =
   | 'VERIFY_PIN'
   | 'CHECK_IF_LOCKED'
   | 'CREATE_LOCK'
+  | 'CHECK_DUPLICATE'
   | 'SYNC_NOW';
 
 interface TabLockMessage {
@@ -65,6 +66,7 @@ const log = (...args: unknown[]) => console.log('[SecureShield]', ...args);
 // Track currently locked URLs and their lock IDs (hostname -> lockId)
 let lockedUrls = new Map<string, number>();
 let pinMap = new Map<number, string>(); // lockId -> pin
+let storageInitialized = false;
 
 function normalizeUrl(url: string | undefined | null): string | null {
   if (!url) return null;
@@ -78,28 +80,38 @@ function normalizeUrl(url: string | undefined | null): string | null {
 }
 
 // Initialize from storage on startup
-chrome.storage.local.get([LOCKED_URLS_KEY, PIN_MAP_KEY], (result) => {
-  log('Loading from storage:', result);
-  
-  if (result[LOCKED_URLS_KEY]) {
-    lockedUrls = new Map();
-    Object.entries(result[LOCKED_URLS_KEY] as Record<string, number | string>).forEach(([key, value]) => {
-      const normalized = normalizeUrl(key);
-      if (!normalized) return;
-      lockedUrls.set(normalized, Number(value));
+async function initializeStorage() {
+  return new Promise<void>((resolve) => {
+    chrome.storage.local.get([LOCKED_URLS_KEY, PIN_MAP_KEY], (result) => {
+      log('Loading from storage:', result);
+      
+      if (result[LOCKED_URLS_KEY]) {
+        lockedUrls = new Map();
+        Object.entries(result[LOCKED_URLS_KEY] as Record<string, number | string>).forEach(([key, value]) => {
+          const normalized = normalizeUrl(key);
+          if (!normalized) return;
+          lockedUrls.set(normalized, Number(value));
+        });
+        log(`Loaded ${lockedUrls.size} locked hostnames from storage:`, Array.from(lockedUrls.entries()));
+      } else {
+        log('No locked URLs found in storage');
+      }
+      
+      if (result[PIN_MAP_KEY]) {
+        pinMap = new Map(Object.entries(result[PIN_MAP_KEY]).map(([k, v]) => [Number(k), v as string]));
+        log(`Loaded ${pinMap.size} PIN mappings from storage:`, Array.from(pinMap.keys()));
+      } else {
+        log('No PIN mappings found in storage');
+      }
+      
+      storageInitialized = true;
+      resolve();
     });
-    log(`Loaded ${lockedUrls.size} locked hostnames from storage`);
-  } else {
-    log('No locked URLs found in storage');
-  }
-  
-  if (result[PIN_MAP_KEY]) {
-    pinMap = new Map(Object.entries(result[PIN_MAP_KEY]).map(([k, v]) => [Number(k), v as string]));
-    log(`Loaded ${pinMap.size} PIN mappings from storage`);
-  } else {
-    log('No PIN mappings found in storage');
-  }
-});
+  });
+}
+
+// Initialize storage before anything else
+initializeStorage();
 
 self.addEventListener('install', () => {
   log('Service worker installed');
@@ -134,7 +146,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
         
         // Get current frequency data
         const result = await chrome.storage.local.get(['websiteFrequency']);
-        const frequencyData = result.websiteFrequency || {};
+        const frequencyData: Record<string, number> = result.websiteFrequency || {};
         
         // Increment visit count
         frequencyData[hostname] = (frequencyData[hostname] || 0) + 1;
@@ -153,8 +165,8 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
     // First check local cache
     let lockId = getLockIdForUrl(changeInfo.url);
     
-    // If not found locally, sync from database and check again
-    if (lockId === null) {
+    // If not found locally and we have locks in memory, sync from database and check again
+    if (lockId === null && lockedUrls.size > 0) {
       await syncLocksFromDatabase();
       lockId = getLockIdForUrl(changeInfo.url);
     }
@@ -176,8 +188,8 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
   const url = details.url;
   let lockId = getLockIdForUrl(url);
   
-  // If not found locally, sync from database immediately
-  if (lockId === null) {
+  // If not found locally and we have locks in memory, sync from database immediately
+  if (lockId === null && lockedUrls.size > 0) {
     await syncLocksFromDatabase();
     lockId = getLockIdForUrl(url);
   }
@@ -460,6 +472,23 @@ chrome.runtime.onMessage.addListener((message: TabLockMessage, _sender, sendResp
     case 'SYNC_NOW':
       respond(syncLocksFromDatabase());
       break;
+    case 'CHECK_DUPLICATE':
+      if (!payload?.url) {
+        sendResponse({ success: false, error: 'Missing URL' });
+        return false;
+      }
+      const normalized = normalizeUrl(payload.url);
+      const isDuplicate = normalized ? lockedUrls.has(normalized) : false;
+      const existingLockId = isDuplicate && normalized ? lockedUrls.get(normalized) : null;
+      sendResponse({ 
+        success: true, 
+        data: { 
+          isDuplicate, 
+          lockId: existingLockId,
+          hostname: normalized 
+        } 
+      });
+      return false;
     case 'CREATE_LOCK':
       if (!payload?.token || !payload.data) {
         sendResponse({ success: false, error: 'Missing token or data' });
@@ -486,6 +515,21 @@ async function createLockViaAPI(
   const API_BASE_URL = 'http://localhost:4000/api';
   
   log('Creating lock via API:', { name: data.name, tabCount: data.tabs.length, hasToken: !!token });
+  
+  // Check for duplicate domains before creating lock
+  const duplicates: string[] = [];
+  for (const tab of data.tabs) {
+    const normalized = normalizeUrl(tab.url);
+    if (normalized && lockedUrls.has(normalized)) {
+      const existingLockId = lockedUrls.get(normalized);
+      duplicates.push(`${normalized} (Lock ID: ${existingLockId})`);
+    }
+  }
+  
+  if (duplicates.length > 0) {
+    log('⚠️ Duplicate domain(s) detected:', duplicates);
+    throw new Error(`This website is already locked. Please unlock it first before locking again.\n\nAlready locked: ${duplicates.join(', ')}`);
+  }
   
   const response = await fetch(`${API_BASE_URL}/locks`, {
     method: 'POST',
@@ -673,17 +717,34 @@ function isInternalUrl(url: string): boolean {
 let syncRetryCount = 0;
 const MAX_SYNC_RETRIES = 3;
 const SYNC_RETRY_DELAY = 2000; // 2 seconds
+let hasLoggedNoAuth = false;
+let lastAuthCheck = 0;
+const AUTH_CHECK_COOLDOWN = 30000; // Only check auth every 30 seconds if missing
 
-async function syncLocksFromDatabase(isRetry = false) {
+async function syncLocksFromDatabase(isRetry = false, forceSync = false) {
   try {
     // Get auth token from storage
     const authData = await chrome.storage.local.get(['secureShield.auth']);
-    const auth = authData['secureShield.auth'];
+    const auth = authData['secureShield.auth'] as { token?: string } | undefined;
     
     if (!auth?.token) {
-      log('No auth token found, skipping database sync');
+      const now = Date.now();
+      // Only log once and respect cooldown period
+      if (!hasLoggedNoAuth) {
+        log('No auth token found, skipping database sync');
+        hasLoggedNoAuth = true;
+      }
+      // Don't spam sync attempts when not authenticated
+      if (!forceSync && (now - lastAuthCheck) < AUTH_CHECK_COOLDOWN) {
+        return;
+      }
+      lastAuthCheck = now;
       return;
     }
+    
+    // Reset flag when we have auth
+    hasLoggedNoAuth = false;
+    lastAuthCheck = 0;
     
     log(`Syncing locks from database... ${isRetry ? `(Retry ${syncRetryCount}/${MAX_SYNC_RETRIES})` : ''}`);
     
@@ -708,29 +769,80 @@ async function syncLocksFromDatabase(isRetry = false) {
     const data = await response.json();
     const locks = data.locks || [];
     
-    // Update lockedUrls map with current database state
-    const newLockedUrls = new Map<string, number>();
-    const newPinMap = new Map<number, string>();
+    log(`Database returned ${locks.length} locks`);
+    
+    // Start with current local storage locks to preserve them
+    const localStorageData = await chrome.storage.local.get([LOCKED_URLS_KEY, PIN_MAP_KEY]);
+    const currentLockedUrls = new Map<string, number>();
+    const currentPinMap = new Map<number, string>();
+    
+    // Load existing locks from storage
+    if (localStorageData[LOCKED_URLS_KEY]) {
+      Object.entries(localStorageData[LOCKED_URLS_KEY] as Record<string, number>).forEach(([key, value]) => {
+        currentLockedUrls.set(key, Number(value));
+      });
+    }
+    
+    if (localStorageData[PIN_MAP_KEY]) {
+      Object.entries(localStorageData[PIN_MAP_KEY] as Record<string, string>).forEach(([key, value]) => {
+        currentPinMap.set(Number(key), value);
+      });
+    }
+    
+    log(`Current local locks: ${currentLockedUrls.size} URLs, ${currentPinMap.size} PINs`);
+    
+    // Merge database locks with local locks
+    const mergedLockedUrls = new Map<string, number>(currentLockedUrls);
+    const mergedPinMap = new Map<number, string>(currentPinMap);
     
     locks.forEach((lock: any) => {
+      log(`Processing lock ${lock.id}: status=${lock.status}, tabs=${lock.tabs?.length || 0}`);
+      
       if (lock.status === 'locked' && Array.isArray(lock.tabs)) {
         lock.tabs.forEach((tab: any) => {
           const normalized = normalizeUrl(tab.url);
           if (normalized) {
-            newLockedUrls.set(normalized, lock.id);
+            // Only add if not already present (prevents duplicates)
+            if (!mergedLockedUrls.has(normalized)) {
+              mergedLockedUrls.set(normalized, lock.id);
+              log(`Added from database: ${normalized} -> Lock ID ${lock.id}`);
+            } else {
+              log(`⚠️ Duplicate URL detected: ${normalized} (existing Lock ID: ${mergedLockedUrls.get(normalized)}, new Lock ID: ${lock.id})`);
+            }
           }
         });
+      }
+      
+      // If lock is unlocked in database, remove it from local
+      if (lock.status === 'unlocked' && Array.isArray(lock.tabs)) {
+        lock.tabs.forEach((tab: any) => {
+          const normalized = normalizeUrl(tab.url);
+          if (normalized && mergedLockedUrls.get(normalized) === lock.id) {
+            mergedLockedUrls.delete(normalized);
+            log(`Removed unlocked URL from local: ${normalized}`);
+          }
+        });
+        // Remove PIN for unlocked locks
+        if (mergedPinMap.has(lock.id)) {
+          mergedPinMap.delete(lock.id);
+          log(`Removed PIN for unlocked lock ${lock.id}`);
+        }
       }
     });
     
     // Update in-memory maps
-    lockedUrls = newLockedUrls;
+    lockedUrls = mergedLockedUrls;
+    pinMap = mergedPinMap;
     
     // Persist to storage
     const urlsObj = Object.fromEntries(lockedUrls.entries());
-    await chrome.storage.local.set({ [LOCKED_URLS_KEY]: urlsObj });
+    const pinObj = Object.fromEntries(pinMap.entries());
+    await chrome.storage.local.set({ 
+      [LOCKED_URLS_KEY]: urlsObj,
+      [PIN_MAP_KEY]: pinObj
+    });
     
-    log(`✅ Synced ${lockedUrls.size} locked URLs from database`);
+    log(`✅ Synced and merged: ${lockedUrls.size} locked URLs, ${pinMap.size} PINs`);
     syncRetryCount = 0; // Reset retry count on success
   } catch (error) {
     log('❌ Error syncing locks from database:', error);
@@ -755,9 +867,9 @@ async function syncLocksFromDatabase(isRetry = false) {
   }
 }
 
-// Sync locks on startup and every 5 seconds for real-time blocking
-syncLocksFromDatabase();
-setInterval(syncLocksFromDatabase, 5000);
+// Sync locks on startup and every 30 seconds (reduced to prevent spam)
+syncLocksFromDatabase(false, true);
+setInterval(() => syncLocksFromDatabase(), 30000);
 
 // Also sync when storage changes (e.g., from web app)
 chrome.storage.onChanged.addListener((changes, areaName) => {
@@ -769,6 +881,13 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
 
 function getLockIdForUrl(url: string): number | null {
   if (isInternalUrl(url)) return null;
+  
+  // Wait for storage to be initialized before checking locks
+  if (!storageInitialized) {
+    log('⚠️ Storage not yet initialized, deferring lock check');
+    return null;
+  }
+  
   const normalized = normalizeUrl(url);
   if (!normalized) return null;
   return lockedUrls.get(normalized) || null;
