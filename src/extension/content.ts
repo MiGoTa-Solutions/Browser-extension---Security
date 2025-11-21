@@ -1,38 +1,49 @@
 import { readLocksFromChromeStorage } from '../utils/chromeStorage';
 
-// ==================== HELPER: SESSION BYPASS ====================
-// This prevents the "Unlock -> Reload -> Lock Again" loop
-const SESSION_UNLOCK_KEY = `secureShield_unlocked_${window.location.hostname}`;
+// ==================== 1. SESSION BYPASS MECHANISM ====================
+// This is the key to fixing the loop. It remembers "Unlock" state 
+// across page reloads for this specific tab/session.
+const SESSION_UNLOCK_PREFIX = 'secureShield_unlocked_';
+
+function getSessionKey(): string {
+  // Remove 'www.' and protocol to match storage keys
+  return SESSION_UNLOCK_PREFIX + window.location.hostname.replace(/^www\./, '');
+}
 
 function isSessionUnlocked(): boolean {
-  return sessionStorage.getItem(SESSION_UNLOCK_KEY) === 'true';
+  return sessionStorage.getItem(getSessionKey()) === 'true';
 }
 
 function setSessionUnlocked() {
-  sessionStorage.setItem(SESSION_UNLOCK_KEY, 'true');
+  console.log('[Content] 🔓 Setting session bypass flag');
+  sessionStorage.setItem(getSessionKey(), 'true');
 }
 
-// ==================== MAIN LOGIC ====================
+// ==================== 2. MAIN CHECK LOGIC ====================
 
 async function checkLockStatus() {
-  // 1. Check for immediate session bypass (Optimistic Unlock)
+  const hostname = window.location.hostname.replace(/^www\./, '');
+  
+  console.log(`[Content] Checking status for: ${hostname}`);
+
+  // CRITICAL: Check session bypass FIRST. 
+  // If we just unlocked it, ignore chrome.storage for now.
   if (isSessionUnlocked()) {
-    console.log('[Content] 🔓 Session is temporarily unlocked (Bypass active)');
+    console.log('[Content] 🔓 Session Bypass Active - Access Granted');
     return; 
   }
 
-  const hostname = window.location.hostname.replace(/^www\./, '');
   const locks = await readLocksFromChromeStorage();
   
-  console.log('[Content] Checking lock status for:', hostname);
-  
   if (locks[hostname]) {
-    console.log('[Content] 🔒 Site is LOCKED:', locks[hostname].name);
+    console.log('[Content] 🔒 Site is LOCKED in storage:', locks[hostname].name);
     createLockOverlay(locks[hostname].name, locks[hostname].lockId);
   } else {
-    console.log('[Content] ✅ Site is NOT locked');
+    console.log('[Content] ✅ Site is NOT locked in storage');
   }
 }
+
+// ==================== 3. OVERLAY & INTERACTION ====================
 
 function createLockOverlay(lockName: string, lockId: number) {
   if (document.getElementById('secureshield-overlay')) return;
@@ -40,9 +51,9 @@ function createLockOverlay(lockName: string, lockId: number) {
   const overlay = document.createElement('div');
   overlay.id = 'secureshield-overlay';
   
-  // Overlay Styling
+  // Heavy-handed styling to ensure it covers everything
   overlay.style.cssText = `
-    position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+    position: fixed !important; top: 0; left: 0; width: 100vw; height: 100vh;
     background-color: rgba(243, 244, 246, 0.98);
     z-index: 2147483647; display: flex; justify-content: center; align-items: center;
     font-family: ui-sans-serif, system-ui, sans-serif;
@@ -82,10 +93,9 @@ function createLockOverlay(lockName: string, lockId: number) {
 
   if (input) input.focus();
 
-  // --- UNLOCK HANDLER ---
-  // Accepts the event 'e' to prevent default browser behavior
+  // --- HANDLE UNLOCK LOGIC ---
   const handleUnlock = async (e?: Event) => {
-    // 1. STOP AUTO-RELOAD
+    // Prevent form submission reload loops
     if (e) {
       e.preventDefault();
       e.stopPropagation();
@@ -100,16 +110,16 @@ function createLockOverlay(lockName: string, lockId: number) {
       return;
     }
 
-    // UI Loading State
+    // UI Feedback
     const originalText = btn.textContent;
     btn.textContent = 'Verifying...';
     btn.setAttribute('disabled', 'true');
     errorMsg.style.display = 'none';
 
     try {
-      // 2. Check Connection
+      // Ensure extension context is alive
       if (!chrome.runtime?.id) {
-        throw new Error('Extension disconnected. Please refresh the page manually.');
+        throw new Error('Extension context lost. Please refresh the page manually.');
       }
 
       console.log('[Content] 📤 Sending UNLOCK_SITE...');
@@ -119,16 +129,15 @@ function createLockOverlay(lockName: string, lockId: number) {
         pin 
       });
 
-      console.log('[Content] 📥 Response:', response);
-
       if (response && response.success) {
-        // 3. SET SESSION BYPASS (Critical Fix for Reload Loop)
+        // --- CRITICAL FIX: Set Bypass Flag ---
         setSessionUnlocked();
 
-        errorMsg.textContent = '✓ Unlocked!';
+        errorMsg.textContent = '✓ Unlocked! Reloading...';
         errorMsg.style.color = '#10b981';
         errorMsg.style.display = 'block';
         
+        // Wait briefly then reload
         setTimeout(() => {
           overlay.remove();
           document.body.style.overflow = '';
@@ -138,10 +147,11 @@ function createLockOverlay(lockName: string, lockId: number) {
         throw new Error(response?.error || 'Incorrect PIN');
       }
     } catch (e) {
-      console.error('[Content] ❌ Unlock Error:', e);
+      console.error('[Content] Unlock Error:', e);
       const msg = e instanceof Error ? e.message : 'Unknown error';
       
-      if (msg.includes('invalidated') || msg.includes('context')) {
+      // Handle invalidation gracefully
+      if (msg.includes('invalidated')) {
         errorMsg.textContent = 'Extension updated. Reloading page...';
         setTimeout(() => window.location.reload(), 1000);
       } else {
@@ -156,15 +166,12 @@ function createLockOverlay(lockName: string, lockId: number) {
     }
   };
 
+  // Attach listeners
   btn?.addEventListener('click', handleUnlock);
-  
-  // Pass 'e' to handleUnlock
   input?.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-      handleUnlock(e); 
-    }
+    if (e.key === 'Enter') handleUnlock(e);
   });
 }
 
-// Initial check
 checkLockStatus();
+```csv
