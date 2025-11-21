@@ -4,34 +4,41 @@ import { readAuthFromChromeStorage, syncLocksToChromeStorage, readLocksFromChrom
 chrome.runtime.onInstalled.addListener(async () => {
   console.log('[Background] Installed. Syncing...');
   await runLockSync();
-  chrome.alarms.create('syncLocks', { periodInMinutes: 5 });
+  
+  // Safety check for alarms permission
+  if (chrome.alarms) {
+    chrome.alarms.create('syncLocks', { periodInMinutes: 5 });
+  } else {
+    console.warn('[Background] "alarms" permission missing. Auto-sync disabled.');
+  }
 });
 
-chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === 'syncLocks') runLockSync();
-});
+if (chrome.alarms) {
+  chrome.alarms.onAlarm.addListener((alarm) => {
+    if (alarm.name === 'syncLocks') runLockSync();
+  });
+}
 
 chrome.tabs.onActivated.addListener(() => {
   runLockSync();
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  // 1. PING
   if (message.type === 'PING') {
     sendResponse({ pong: true });
     return false;
   }
 
-  // 2. UNLOCK
   if (message.type === 'UNLOCK_SITE') {
+    console.log(`[Background] Request to unlock: ${message.lockId}`);
     handleUnlockSite(message.lockId, message.pin)
       .then(() => sendResponse({ success: true }))
       .catch((err) => sendResponse({ success: false, error: err.message }));
     return true; 
   }
 
-  // 3. CREATE LOCK (Quick Lock from Floating Button)
   if (message.type === 'CREATE_LOCK') {
+    console.log('[Background] Request to create lock');
     handleCreateLock(message.pin, message.tabs)
       .then(() => sendResponse({ success: true }))
       .catch((err) => sendResponse({ success: false, error: err.message }));
@@ -47,7 +54,11 @@ async function runLockSync() {
   try {
     const auth = await readAuthFromChromeStorage();
     if (!auth || !auth.token) return;
+    
     const response = await tabLockApi.list(auth.token);
+    // Log the raw response to debug "0 locks" issue
+    console.log('[Background] API Response Locks:', response.locks); 
+    
     await syncLocksToChromeStorage(response.locks);
     console.log(`[Background] Synced ${response.locks.length} locks`);
   } catch (error) {
@@ -66,7 +77,6 @@ async function handleCreateLock(pin: string, tabs: any[]) {
   const auth = await readAuthFromChromeStorage();
   if (!auth?.token) throw new Error('You must be logged in');
 
-  // Use first tab title for lock name
   const name = `Quick Lock: ${new URL(tabs[0].url).hostname}`;
   
   await tabLockApi.create(auth.token, {
