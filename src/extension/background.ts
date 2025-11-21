@@ -31,6 +31,24 @@ chrome.runtime.onInstalled.addListener(() => {
 
 // Listen for messages from Content Script
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  const senderInfo = {
+    url: sender.tab?.url || sender.url || 'unknown',
+    tabId: sender.tab?.id || 'no-tab',
+    frameId: sender.frameId || 0
+  };
+  
+  console.log('[Background] 📨 RAW MESSAGE RECEIVED');
+  console.log('[Background] Message object:', message);
+  console.log('[Background] Sender info:', senderInfo);
+  console.log('[Background] Message type:', message?.type);
+  
+  // PING handler for testing communication
+  if (message.type === 'PING') {
+    console.log('[Background] 🏓 PING received, sending PONG');
+    sendResponse({ pong: true, timestamp: Date.now() });
+    return false; // Synchronous response
+  }
+  
   log('Message', `Received message type: ${message.type}`, { from: sender.tab?.url || 'popup' });
   
   if (message.type === 'VERIFY_PIN') {
@@ -63,6 +81,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
   
+  console.error('[Background] ⚠️ Unknown message type received:', message.type);
+  console.error('[Background] Full message object:', message);
   log('Message', `Unknown message type: ${message.type}`);
   sendResponse({ success: false, error: 'Unknown message type' });
   return false;

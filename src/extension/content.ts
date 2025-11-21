@@ -53,6 +53,10 @@ function createLockOverlay(lockName: string, lockId: number) {
         Unlock Access
       </button>
       
+      <button id="ss-ping-btn" style="width: 100%; background: #6b7280; color: white; padding: 0.5rem; border-radius: 0.5rem; font-weight: 500; border: none; cursor: pointer; margin-top: 0.5rem; font-size: 0.875rem;">
+        Test Connection (PING)
+      </button>
+      
       <p id="ss-error-msg" style="color: #ef4444; font-size: 0.875rem; margin-top: 1rem; display: none;"></p>
     </div>
   `;
@@ -63,15 +67,24 @@ function createLockOverlay(lockName: string, lockId: number) {
   // Event Listeners
   const input = document.getElementById('ss-pin-input') as HTMLInputElement;
   const btn = document.getElementById('ss-unlock-btn');
+  const pingBtn = document.getElementById('ss-ping-btn');
   const errorMsg = document.getElementById('ss-error-msg');
 
   if (input) input.focus();
+  
+  // Test PING handler
+  const handlePing = async () => {\n    if (!errorMsg) return;\n    console.log('[Content] 🏓 PING button clicked');\n    \n    try {\n      console.log('[Content] Sending PING message...');\n      const response = await chrome.runtime.sendMessage({ type: 'PING' });\n      console.log('[Content] ✅ PING response:', response);\n      \n      if (response?.pong) {\n        errorMsg.textContent = `✓ Connection OK (${response.timestamp})`;\n        errorMsg.style.color = '#10b981';\n        errorMsg.style.display = 'block';\n        setTimeout(() => {\n          errorMsg.style.display = 'none';\n        }, 3000);\n      } else {\n        errorMsg.textContent = '⚠️ Unexpected PING response';\n        errorMsg.style.color = '#f59e0b';\n        errorMsg.style.display = 'block';\n      }\n    } catch (e) {\n      console.error('[Content] ❌ PING FAILED:', e);\n      errorMsg.textContent = `❌ Connection failed: ${e instanceof Error ? e.message : 'Unknown error'}`;\n      errorMsg.style.color = '#ef4444';\n      errorMsg.style.display = 'block';\n    }\n  };
 
   const handleUnlock = async () => {
-    if (!input || !errorMsg || !btn) return;
+    console.log('[Content] 🔘 Unlock button clicked');
+    
+    if (!input || !errorMsg || !btn) {
+      console.error('[Content] ❌ UI elements missing:', { input: !!input, errorMsg: !!errorMsg, btn: !!btn });
+      return;
+    }
     
     const pin = input.value;
-    console.log('[Content Script] Unlock attempt - Lock ID:', lockId, 'PIN length:', pin.length);
+    console.log('[Content] Unlock attempt - Lock ID:', lockId, 'PIN length:', pin.length);
     
     if (pin.length < 4) {
       errorMsg.textContent = 'PIN must be at least 4 digits';
@@ -86,21 +99,31 @@ function createLockOverlay(lockName: string, lockId: number) {
     btn.setAttribute('disabled', 'true');
     errorMsg.style.display = 'none';
 
-    console.log('[Content Script] 📤 Sending UNLOCK_SITE message to background...');
+    const payload = { 
+      type: 'UNLOCK_SITE', 
+      lockId: lockId,
+      pin 
+    };
+    console.log('[Content] 📤 Sending payload to background:', payload);
+    console.log('[Content] Extension ID:', chrome.runtime.id);
     
     try {
-      // Send message to background to unlock (updates DB + chrome.storage)
-      const response = await chrome.runtime.sendMessage({ 
-        type: 'UNLOCK_SITE', 
-        lockId: lockId,
-        pin 
-      });
-
-      console.log('[Content Script] 📥 Received response from background:', response);
+      // Check if runtime is available
+      if (!chrome.runtime || !chrome.runtime.sendMessage) {
+        throw new Error('chrome.runtime.sendMessage is not available - extension context may be invalidated');
+      }
+      
+      console.log('[Content] Calling chrome.runtime.sendMessage...');
+      const response = await chrome.runtime.sendMessage(payload);
+      console.log('[Content] 📥 Response received:', response);
 
       if (response && response.success) {
-        console.log('[Content Script] ✅ Unlock successful! Removing overlay and reloading...');
+        console.log('[Content] ✅ Unlock successful! Removing overlay and reloading...');
         // Success: overlay removed, storage updated, DB unlocked
+        errorMsg.textContent = '✓ Unlocked! Reloading...';
+        errorMsg.style.color = '#10b981';
+        errorMsg.style.display = 'block';
+        
         overlay.remove();
         document.body.style.overflow = '';
         
@@ -109,16 +132,27 @@ function createLockOverlay(lockName: string, lockId: number) {
           window.location.reload();
         }, 300);
       } else {
-        console.log('[Content Script] ❌ Unlock failed:', response?.error);
-        errorMsg.textContent = response?.error || 'Incorrect PIN';
+        console.error('[Content] ❌ Unlock failed - Response:', response);
+        const errorText = response?.error || 'Unlock failed - no error message';
+        errorMsg.textContent = errorText;
         errorMsg.style.display = 'block';
         input.value = '';
         input.focus();
+        // DO NOT RELOAD - keep overlay visible to show error
       }
     } catch (e) {
-      console.error('[Content Script] ❌ Exception during unlock:', e);
-      errorMsg.textContent = 'Unlock failed. Check connection.';
+      console.error('[Content] ❌ MESSAGE SEND FAILED:', e);
+      console.error('[Content] Error type:', e instanceof Error ? e.constructor.name : typeof e);
+      console.error('[Content] Error message:', e instanceof Error ? e.message : String(e));
+      console.error('[Content] Error stack:', e instanceof Error ? e.stack : 'N/A');
+      
+      // Display detailed error on overlay
+      const errorMessage = e instanceof Error ? e.message : 'Unknown error during message send';
+      errorMsg.innerHTML = `<strong>Message Send Failed:</strong><br>${errorMessage}<br><br><small>Check Service Worker console for details</small>`;
       errorMsg.style.display = 'block';
+      errorMsg.style.fontSize = '0.75rem';
+      
+      // DO NOT RELOAD - keep overlay visible to show error
     } finally {
       btn.textContent = originalBtnText;
       btn.removeAttribute('disabled');
@@ -126,6 +160,7 @@ function createLockOverlay(lockName: string, lockId: number) {
   };
 
   btn?.addEventListener('click', handleUnlock);
+  pingBtn?.addEventListener('click', handlePing);
   input?.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') handleUnlock();
   });
