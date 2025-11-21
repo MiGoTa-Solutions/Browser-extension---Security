@@ -2,6 +2,7 @@ import { ReactNode, createContext, useContext, useEffect, useMemo, useState } fr
 import { authApi } from '../services/api';
 import { AuthUser } from '../types';
 import { clearAuthToken, getAuthToken, saveAuthToken } from '../utils/chromeStorage';
+import { notifyExtensionSync } from '../utils/extensionApi'; // Import the fix
 
 interface AuthState {
   user: AuthUser | null;
@@ -21,15 +22,6 @@ const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 const STORAGE_KEY = 'secureShield.auth';
 
-// Helper to notify Background Script to sync immediately
-const notifyExtension = () => {
-  if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
-    chrome.runtime.sendMessage({ type: 'FORCE_SYNC' }).catch(() => {
-      // Ignore errors if extension context is invalid (e.g., running in normal web page)
-    });
-  }
-};
-
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AuthState>({ user: null, token: null, loading: true });
 
@@ -43,11 +35,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           const parsed = JSON.parse(raw);
           setState({ user: parsed.user, token: parsed.token, loading: false });
           // Ensure Chrome Storage is in sync
-          if (parsed.token) saveAuthToken(parsed.token);
+          if (parsed.token) await saveAuthToken(parsed.token);
           return;
         }
 
-        // Fallback: Check Chrome Storage (in case user logged in via another view)
+        // Fallback: Check Chrome Storage
         const chromeToken = await getAuthToken();
         if (chromeToken) {
           const response = await authApi.me(chromeToken);
@@ -70,30 +62,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // 2. Auth Actions
   const login = async (email: string, password: string) => {
     const response = await authApi.login({ email, password });
-    
-    // Save to LocalStorage (For React UI)
     localStorage.setItem(STORAGE_KEY, JSON.stringify(response));
-    
-    // Save to Chrome Storage (For Background Script)
     await saveAuthToken(response.token);
     
     setState({ user: response.user, token: response.token, loading: false });
-    notifyExtension();
+    notifyExtensionSync(); // Fixed call
   };
 
   const register = async (payload: { email: string; password: string; pin?: string }) => {
     const response = await authApi.register(payload);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(response));
     await saveAuthToken(response.token);
+    
     setState({ user: response.user, token: response.token, loading: false });
-    notifyExtension();
+    notifyExtensionSync(); // Fixed call
   };
 
   const logout = () => {
     localStorage.removeItem(STORAGE_KEY);
     clearAuthToken();
     setState({ user: null, token: null, loading: false });
-    notifyExtension();
+    notifyExtensionSync(); // Fixed call
   };
 
   const setPin = async (pin: string) => {
