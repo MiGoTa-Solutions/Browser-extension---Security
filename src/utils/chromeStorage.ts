@@ -54,7 +54,7 @@ export async function clearAuthFromChromeStorage(): Promise<void> {
 
 export interface LockedDomainCache {
   [hostname: string]: {
-    lockId: string;
+    lockId: number;
     name: string;
   };
 }

@@ -5,12 +5,18 @@ async function checkLockStatus() {
   const hostname = window.location.hostname.replace(/^www\./, '');
   const locks = await readLocksFromChromeStorage();
   
+  console.log('[Content Script] Checking lock status for:', hostname);
+  console.log('[Content Script] Locked sites in storage:', Object.keys(locks));
+  
   if (locks[hostname]) {
+    console.log('[Content Script] 🔒 Site is LOCKED - Lock ID:', locks[hostname].lockId, 'Name:', locks[hostname].name);
     createLockOverlay(locks[hostname].name, locks[hostname].lockId);
+  } else {
+    console.log('[Content Script] ✅ Site is NOT locked - access granted');
   }
 }
 
-function createLockOverlay(lockName: string, lockId: string) {
+function createLockOverlay(lockName: string, lockId: number) {
   // Avoid duplicate overlays
   if (document.getElementById('secureshield-overlay')) return;
 
@@ -65,9 +71,12 @@ function createLockOverlay(lockName: string, lockId: string) {
     if (!input || !errorMsg || !btn) return;
     
     const pin = input.value;
+    console.log('[Content Script] Unlock attempt - Lock ID:', lockId, 'PIN length:', pin.length);
+    
     if (pin.length < 4) {
       errorMsg.textContent = 'PIN must be at least 4 digits';
       errorMsg.style.display = 'block';
+      console.log('[Content Script] ❌ PIN too short');
       return;
     }
 
@@ -77,15 +86,20 @@ function createLockOverlay(lockName: string, lockId: string) {
     btn.setAttribute('disabled', 'true');
     errorMsg.style.display = 'none';
 
+    console.log('[Content Script] 📤 Sending UNLOCK_SITE message to background...');
+    
     try {
       // Send message to background to unlock (updates DB + chrome.storage)
       const response = await chrome.runtime.sendMessage({ 
         type: 'UNLOCK_SITE', 
-        lockId: parseInt(lockId, 10),
+        lockId: lockId,
         pin 
       });
 
+      console.log('[Content Script] 📥 Received response from background:', response);
+
       if (response && response.success) {
+        console.log('[Content Script] ✅ Unlock successful! Removing overlay and reloading...');
         // Success: overlay removed, storage updated, DB unlocked
         overlay.remove();
         document.body.style.overflow = '';
@@ -95,15 +109,16 @@ function createLockOverlay(lockName: string, lockId: string) {
           window.location.reload();
         }, 300);
       } else {
+        console.log('[Content Script] ❌ Unlock failed:', response?.error);
         errorMsg.textContent = response?.error || 'Incorrect PIN';
         errorMsg.style.display = 'block';
         input.value = '';
         input.focus();
       }
     } catch (e) {
+      console.error('[Content Script] ❌ Exception during unlock:', e);
       errorMsg.textContent = 'Unlock failed. Check connection.';
       errorMsg.style.display = 'block';
-      console.error('[SecureShield] Unlock error:', e);
     } finally {
       btn.textContent = originalBtnText;
       btn.removeAttribute('disabled');
