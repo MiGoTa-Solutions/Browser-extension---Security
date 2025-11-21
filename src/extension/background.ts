@@ -11,35 +11,43 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === 'syncLocks') runLockSync();
 });
 
-// Sync when user switches tabs (keeps state fresh)
 chrome.tabs.onActivated.addListener(() => {
   runLockSync();
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  // 1. PING
   if (message.type === 'PING') {
     sendResponse({ pong: true });
     return false;
   }
 
+  // 2. UNLOCK
   if (message.type === 'UNLOCK_SITE') {
-    console.log(`[Background] Request to unlock: ${message.lockId}`);
     handleUnlockSite(message.lockId, message.pin)
       .then(() => sendResponse({ success: true }))
       .catch((err) => sendResponse({ success: false, error: err.message }));
-    return true; // Async response
+    return true; 
   }
+
+  // 3. CREATE LOCK (Quick Lock from Floating Button)
+  if (message.type === 'CREATE_LOCK') {
+    handleCreateLock(message.pin, message.tabs)
+      .then(() => sendResponse({ success: true }))
+      .catch((err) => sendResponse({ success: false, error: err.message }));
+    return true;
+  }
+
   return false;
 });
+
+// --- LOGIC ---
 
 async function runLockSync() {
   try {
     const auth = await readAuthFromChromeStorage();
     if (!auth || !auth.token) return;
-    
-    // Get fresh list from server
     const response = await tabLockApi.list(auth.token);
-    // Update local Chrome storage
     await syncLocksToChromeStorage(response.locks);
     console.log(`[Background] Synced ${response.locks.length} locks`);
   } catch (error) {
@@ -50,10 +58,23 @@ async function runLockSync() {
 async function handleUnlockSite(lockId: number, pin: string) {
   const auth = await readAuthFromChromeStorage();
   if (!auth?.token) throw new Error('Not authenticated');
-
-  // 1. Update Database (Server)
   await tabLockApi.unlock(auth.token, lockId, pin);
+  await runLockSync();
+}
+
+async function handleCreateLock(pin: string, tabs: any[]) {
+  const auth = await readAuthFromChromeStorage();
+  if (!auth?.token) throw new Error('You must be logged in');
+
+  // Use first tab title for lock name
+  const name = `Quick Lock: ${new URL(tabs[0].url).hostname}`;
   
-  // 2. Refresh Local Cache Immediately (Extension)
+  await tabLockApi.create(auth.token, {
+    name,
+    isGroup: false,
+    tabs,
+    pin
+  });
+  
   await runLockSync();
 }
