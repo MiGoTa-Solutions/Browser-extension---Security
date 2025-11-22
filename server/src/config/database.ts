@@ -40,22 +40,6 @@ export async function ensureSchema() {
 
   await pool.query<ResultSetHeader>(createUsersTable);
 
-  const createTabLocksTable = `
-    CREATE TABLE IF NOT EXISTS tab_locks (
-      id INT AUTO_INCREMENT PRIMARY KEY,
-      user_id INT NOT NULL,
-      name VARCHAR(255) NOT NULL,
-      note VARCHAR(255) NULL,
-      is_group TINYINT(1) DEFAULT 0,
-      tabs_json JSON NOT NULL,
-      status ENUM('locked','unlocked') DEFAULT 'locked',
-      locked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      unlocked_at TIMESTAMP NULL,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-      CONSTRAINT fk_tab_locks_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-  `;
-
-  await pool.query<ResultSetHeader>(createTabLocksTable);
+  // Web Access Lock table creation removed. Existing tables left untouched.
+  // External module should manage its own schema migrations for tab_locks.
 }
