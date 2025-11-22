@@ -62,15 +62,6 @@ export interface TabInfo {
   url: string;
 }
 
-export type TabLockStatus = 'locked' | 'unlocked';
-
-export interface TabLock {
-  id: number;
-  name: string;
-  note?: string;
-  isGroup: boolean;
-  status: TabLockStatus;
-  tabs: TabInfo[];
-  lockedAt: string;
-  unlockedAt?: string;
-}
+// Web Access Lock types removed. External module will reintroduce them.
+// Placeholder (unreferenced) kept for ease of future diffing:
+// export interface TabLock { /* provided by external module */ }

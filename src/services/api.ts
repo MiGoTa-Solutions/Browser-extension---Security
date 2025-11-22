@@ -1,4 +1,4 @@
-import { AuthUser, TabInfo, TabLock } from '../types';
+import { AuthUser, TabInfo } from '../types';
 
 // ==================== ENVIRONMENT DETECTION ====================
 
@@ -146,28 +146,5 @@ export const authApi = {
     request<{ success: boolean }>('/auth/verify-pin', { method: 'POST', token, data }),
 };
 
-export const tabLockApi = {
-  list: (token: string) => request<{ locks: TabLock[] }>('/locks', { token }),
-  create: (
-    token: string,
-    data: { name: string; isGroup: boolean; note?: string; tabs: TabInfo[]; pin: string }
-  ) => request<{ lock: TabLock }>('/locks', { method: 'POST', token, data }),
-  unlock: (token: string, lockId: number, pin: string) =>
-    request<{ lock: TabLock }>(`/locks/${lockId}/unlock`, {
-      method: 'POST',
-      token,
-      data: { pin },
-    }),
-  relock: (token: string, lockId: number, pin: string) =>
-    request<{ lock: TabLock }>(`/locks/${lockId}/relock`, {
-      method: 'POST',
-      token,
-      data: { pin },
-    }),
-  remove: (token: string, lockId: number, pin: string) =>
-    request<{ success: boolean }>(`/locks/${lockId}`, {
-      method: 'DELETE',
-      token,
-      data: { pin },
-    }),
-};
+// Web Access Lock API removed. Placeholder for future integration:
+// export const webAccessLockApi = { /* incoming module will supply implementation */ };

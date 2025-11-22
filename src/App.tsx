@@ -3,7 +3,6 @@ import { Navigation } from './components/Navigation';
 import { Spinner } from './components/Spinner';
 import { Button } from './components/Button';
 import { useAuth } from './context/AuthContext';
-import { WebAccessLock } from './pages/WebAccessLock';
 import { MaliciousSiteDetector } from './pages/MaliciousSiteDetector';
 import { ThreatQuarantine } from './pages/ThreatQuarantine';
 import { DOMContentInspection } from './pages/DOMContentInspection';
@@ -66,16 +65,9 @@ function App() {
 
             <main className="flex-1 px-4 py-6 md:px-8 bg-mesh-gradient">
               <Routes>
-                <Route path="/" element={<Navigate to={user ? '/wal' : '/auth'} replace />} />
-                <Route path="/auth" element={user ? <Navigate to="/wal" replace /> : <AuthPage />} />
-                <Route
-                  path="/wal"
-                  element={
-                    <ProtectedRoute>
-                      <WebAccessLock />
-                    </ProtectedRoute>
-                  }
-                />
+                {/* Default route now points to /detect since WebAccessLock module removed */}
+                <Route path="/" element={<Navigate to={user ? '/detect' : '/auth'} replace />} />
+                <Route path="/auth" element={user ? <Navigate to="/detect" replace /> : <AuthPage />} />
                 <Route
                   path="/detect"
                   element={
