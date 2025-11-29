@@ -7,6 +7,7 @@ import { MaliciousSiteDetector } from './pages/MaliciousSiteDetector';
 import { ThreatQuarantine } from './pages/ThreatQuarantine';
 import { DOMContentInspection } from './pages/DOMContentInspection';
 import { CookieSecurityAudit } from './pages/CookieSecurityAudit';
+import { WebAccessLock } from './pages/WebAccessLock';
 import { AuthPage } from './pages/Auth';
 import { cn } from './utils/cn';
 
@@ -68,6 +69,14 @@ function App() {
                 {/* Default route now points to /detect since WebAccessLock module removed */}
                 <Route path="/" element={<Navigate to={user ? '/detect' : '/auth'} replace />} />
                 <Route path="/auth" element={user ? <Navigate to="/detect" replace /> : <AuthPage />} />
+                <Route
+                  path="/wal"
+                  element={
+                    <ProtectedRoute>
+                      <WebAccessLock />
+                    </ProtectedRoute>
+                  }
+                />
                 <Route
                   path="/detect"
                   element={
