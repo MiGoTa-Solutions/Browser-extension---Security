@@ -17,7 +17,7 @@ function isExtensionContext(): boolean {
 function getApiBaseUrl(): string {
   if (isExtensionContext()) {
     // Extension context: MUST use absolute URL
-    const extensionApiUrl = 'http://localhost:4000/api';
+    const extensionApiUrl = 'http://127.0.0.1:4000/api';
     console.log('[API] Running in Extension context, using absolute URL:', extensionApiUrl);
     return extensionApiUrl;
   } else {

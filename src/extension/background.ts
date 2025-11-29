@@ -6,7 +6,7 @@ interface TabLock {
 }
 
 // Assuming localhost for development. Change to your Render URL for production!
-const API_BASE_URL = 'http://localhost:4000/api'; 
+const API_BASE_URL = 'http://127.0.0.1:4000/api';
 
 // --- 1. SYNC LOCKS FROM SERVER ---
 async function syncLocks() {
