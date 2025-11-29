@@ -146,5 +146,16 @@ export const authApi = {
     request<{ success: boolean }>('/auth/verify-pin', { method: 'POST', token, data }),
 };
 
-// Web Access Lock API removed. Placeholder for future integration:
-// export const webAccessLockApi = { /* incoming module will supply implementation */ };
+// ... existing imports and code ...
+
+// Add this alongside authApi and scannerApi
+export const webAccessLockApi = {
+  list: (token: string) => 
+    request<{ locks: any[] }>('/locks', { token }),
+    
+  create: (token: string, data: { url: string; name?: string }) => 
+    request<{ success: boolean; lock: any }>('/locks', { method: 'POST', token, data }),
+    
+  delete: (token: string, id: number) => 
+    request<{ success: boolean }>(`/locks/${id}`, { method: 'DELETE', token }),
+};

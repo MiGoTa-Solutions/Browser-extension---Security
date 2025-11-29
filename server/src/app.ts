@@ -2,6 +2,7 @@ import cors from 'cors';
 import express from 'express';
 import helmet from 'helmet';
 import authRoutes from './routes/auth';
+import webAccessLockRoutes from './routes/webAccessLock';
 
 const app = express();
 
@@ -21,7 +22,7 @@ app.get('/health', (_req, res) => {
 });
 
 app.use('/api/auth', authRoutes);
-// Web Access Lock routes removed. External module will provide: app.use('/api/locks', <newRouter>)
+app.use('/api/locks', webAccessLockRoutes);
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 app.use((err: Error & { statusCode?: number }, _req: express.Request, res: express.Response, _next: express.NextFunction) => {

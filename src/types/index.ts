@@ -62,6 +62,16 @@ export interface TabInfo {
   url: string;
 }
 
-// Web Access Lock types removed. External module will reintroduce them.
-// Placeholder (unreferenced) kept for ease of future diffing:
-// export interface TabLock { /* provided by external module */ }
+export interface TabLock {
+  id: number;
+  user_id: number;
+  url: string;
+  lock_name: string;
+  is_locked: boolean;
+  created_at: string;
+}
+
+export interface CreateLockPayload {
+  url: string;
+  name?: string;
+}
