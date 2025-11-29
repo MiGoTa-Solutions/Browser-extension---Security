@@ -1,4 +1,4 @@
-import mysql, { Pool, PoolOptions, ResultSetHeader } from 'mysql2/promise';
+import mysql, { Pool, PoolOptions, ResultSetHeader, RowDataPacket } from 'mysql2/promise';
 
 const databaseUrl = process.env.DATABASE_URL;
 
@@ -27,6 +27,11 @@ const poolOptions: PoolOptions = {
 export const pool: Pool = mysql.createPool(poolOptions);
 
 export async function ensureSchema() {
+  await ensureUsersTable();
+  await ensureTabLocksTable();
+}
+
+async function ensureUsersTable() {
   const createUsersTable = `
     CREATE TABLE IF NOT EXISTS users (
       id INT AUTO_INCREMENT PRIMARY KEY,
@@ -39,7 +44,88 @@ export async function ensureSchema() {
   `;
 
   await pool.query<ResultSetHeader>(createUsersTable);
+}
 
-  // Web Access Lock table creation removed. Existing tables left untouched.
-  // External module should manage its own schema migrations for tab_locks.
+async function ensureTabLocksTable() {
+  const createTabLocksTable = `
+    CREATE TABLE IF NOT EXISTS tab_locks (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      user_id INT NOT NULL,
+      url VARCHAR(255) NULL,
+      lock_name VARCHAR(100) NULL,
+      is_locked BOOLEAN DEFAULT TRUE,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `;
+
+  await pool.query<ResultSetHeader>(createTabLocksTable);
+
+  const [columns] = await pool.query<RowDataPacket[]>('SHOW COLUMNS FROM tab_locks');
+  const columnNames = new Set(columns.map((column) => column.Field as string));
+  const columnMap = new Map(columns.map((column) => [column.Field as string, column]));
+
+  const allowNullColumn = async (columnName: string) => {
+    const column = columnMap.get(columnName);
+    if (!column || column.Null !== 'NO') return;
+    const defaultClause = column.Default === null
+      ? ''
+      : column.Default === 'CURRENT_TIMESTAMP'
+        ? 'DEFAULT CURRENT_TIMESTAMP'
+        : `DEFAULT ${mysql.escape(column.Default)}`;
+    await pool.query(`ALTER TABLE tab_locks MODIFY COLUMN ${columnName} ${column.Type} NULL ${defaultClause}`);
+  };
+
+  if (!columnNames.has('url')) {
+    await pool.query('ALTER TABLE tab_locks ADD COLUMN url VARCHAR(255) NULL AFTER user_id');
+    columnNames.add('url');
+  }
+
+  if (!columnNames.has('lock_name')) {
+    await pool.query('ALTER TABLE tab_locks ADD COLUMN lock_name VARCHAR(100) NULL AFTER url');
+    columnNames.add('lock_name');
+  }
+
+  if (!columnNames.has('is_locked')) {
+    await pool.query('ALTER TABLE tab_locks ADD COLUMN is_locked BOOLEAN DEFAULT TRUE AFTER lock_name');
+    columnNames.add('is_locked');
+
+    if (columnNames.has('status')) {
+      await pool.query("UPDATE tab_locks SET is_locked = CASE WHEN status = 'locked' THEN TRUE ELSE FALSE END WHERE status IS NOT NULL");
+    }
+  }
+
+  if (!columnNames.has('created_at')) {
+    await pool.query('ALTER TABLE tab_locks ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP AFTER is_locked');
+    columnNames.add('created_at');
+
+    if (columnNames.has('locked_at')) {
+      await pool.query('UPDATE tab_locks SET created_at = locked_at WHERE locked_at IS NOT NULL');
+    }
+  }
+
+  if (columnNames.has('name')) {
+    await allowNullColumn('name');
+    await pool.query("UPDATE tab_locks SET lock_name = name WHERE (lock_name IS NULL OR lock_name = '') AND name IS NOT NULL");
+  }
+
+  if (columnNames.has('tabs_json')) {
+    await allowNullColumn('tabs_json');
+  }
+
+  if (columnNames.has('status')) {
+    await allowNullColumn('status');
+  }
+
+  if (columnNames.has('pin')) {
+    await allowNullColumn('pin');
+  }
+
+  if (columnNames.has('locked_at')) {
+    await allowNullColumn('locked_at');
+  }
+
+  if (columnNames.has('unlocked_at')) {
+    await allowNullColumn('unlocked_at');
+  }
 }

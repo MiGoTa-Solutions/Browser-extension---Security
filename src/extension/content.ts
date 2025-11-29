@@ -1,5 +1,5 @@
 const API_BASE_URL = 'http://localhost:4000/api';
-const GEMINI_API_KEY = 'AIzaSyDvHWTKIxHxGo1IWwEPZNqzvnBYuzUFVDc';
+const GEMINI_API_KEY = 'AIzaSyCrBuewLwgc1GhrkZnunYplTnerHfo5rDg';
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
 const BUTTON_ID = 'secure-shield-float-btn';
 const STYLE_ID = 'secure-shield-style';
@@ -22,6 +22,22 @@ type GeminiContentPart = { text?: string };
 type GeminiCandidate = { content?: { parts?: GeminiContentPart[] } };
 interface GeminiResponse {
   candidates?: GeminiCandidate[];
+}
+
+function normalizeDomain(value?: string | null): string | null {
+  if (!value) return null;
+  try {
+    return value.replace(/^(https?:\/\/)?(www\.)?/, '').split('/')[0].toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+function lockMatchesHost(lock: TabLock, hostname: string): boolean {
+  if (!lock?.is_locked) return false;
+  const normalized = normalizeDomain(lock?.url);
+  if (!normalized) return false;
+  return hostname.includes(normalized);
 }
 
 const HTML_ESCAPE_MAP: Record<string, string> = {
@@ -151,7 +167,7 @@ async function init() {
   };
 
   const hostname = window.location.hostname.toLowerCase();
-  if (Array.isArray(lockedSites) && lockedSites.some((lock) => lock.is_locked && hostname.includes(lock.url.toLowerCase()))) {
+  if (Array.isArray(lockedSites) && lockedSites.some((lock) => lockMatchesHost(lock, hostname))) {
     return;
   }
 

@@ -7,6 +7,15 @@ interface TabLock {
 
 const API_BASE_URL = 'http://127.0.0.1:4000/api';
 
+function normalizeDomain(value?: string | null): string | null {
+  if (!value) return null;
+  try {
+    return value.replace(/^(https?:\/\/)?(www\.)?/, '').split('/')[0].toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
 // --- 1. SYNC LOCKS FROM SERVER ---
 async function syncLocks() {
   try {
@@ -70,9 +79,12 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
     const targetUrl = new URL(currentUrl);
     const hostname = targetUrl.hostname.toLowerCase();
 
-    const matchedLock = lockedSites.find((lock: TabLock) => 
-      lock.is_locked && hostname.includes(lock.url.toLowerCase())
-    );
+    const matchedLock = lockedSites.find((lock: TabLock) => {
+      if (!lock?.is_locked) return false;
+      const normalized = normalizeDomain(lock?.url);
+      if (!normalized) return false;
+      return hostname.includes(normalized);
+    });
 
     if (matchedLock) {
       const lockPageUrl = chrome.runtime.getURL('lock.html') + 
