@@ -1,6 +1,3 @@
-// Web Access Lock helpers removed. Only auth token helpers retained.
-import { AuthUser } from '../types';
-
 // ==================== TYPES ====================
 
 export interface StorageSchema {
@@ -21,8 +18,8 @@ export const saveAuthToken = async (token: string): Promise<void> => {
 
 export const getAuthToken = async (): Promise<string | null> => {
   if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.local) return null;
-  const res = await chrome.storage.local.get('auth_token');
-  return res.auth_token || null;
+  const res = (await chrome.storage.local.get('auth_token')) as StorageSchema;
+  return res.auth_token ?? null;
 };
 
 export const clearAuthToken = async (): Promise<void> => {

@@ -1,4 +1,4 @@
-import { AuthUser, TabInfo } from '../types';
+import { AuthUser } from '../types';
 
 // ==================== ENVIRONMENT DETECTION ====================
 
