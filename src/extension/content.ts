@@ -1,4 +1,4 @@
-const API_BASE_URL = 'http://localhost:4000/api';
+const API_BASE_URL = 'http://127.0.0.1:4000/api';
 const GEMINI_API_KEY = 'AIzaSyCrBuewLwgc1GhrkZnunYplTnerHfo5rDg';
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
 const BUTTON_ID = 'secure-shield-float-btn';
