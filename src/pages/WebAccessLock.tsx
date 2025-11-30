@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { Lock, Trash2, Plus, Globe, Sparkles } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { webAccessLockApi } from '../services/api';
