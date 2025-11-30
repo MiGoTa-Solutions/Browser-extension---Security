@@ -27,13 +27,18 @@ function normalizeDomain(value?: string | null): string | null {
   }
 }
 
-// --- 1. SYNC LOCKS FROM SERVER (High Frequency) ---
+// --- 1. SYNC LOCKS FROM SERVER (High Frequency & Debug Mode) ---
 async function syncLocks() {
   try {
     const data = await chrome.storage.local.get('auth_token');
     const token = data.auth_token;
     
-    if (!token) return;
+    // DEBUG: Check for Auth Token
+    if (!token) {
+        // Only warn once per session to avoid spamming, or use verbose log
+        console.warn('[Background] Sync Skipped: No Auth Token found. Please log in via Extension Popup.');
+        return;
+    }
 
     const response = await fetch(`${API_BASE_URL}/locks`, {
       headers: { 'Authorization': `Bearer ${token}` }
@@ -45,7 +50,12 @@ async function syncLocks() {
         lockedSites: result.locks, 
         lastSync: Date.now() 
       });
-      console.log('[Background] Locks synced:', result.locks.length);
+      
+      // DEBUG: Log the count and the actual list
+      console.log(`[Background] Locks synced: ${result.locks.length}`);
+      if (result.locks.length > 0) {
+        console.log('[Background] Locked Domains:', result.locks.map((l: any) => l.url));
+      }
     }
   } catch (error) {
     // Silent fail for connection errors to avoid console spam
