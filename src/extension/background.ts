@@ -5,6 +5,11 @@ interface TabLock {
   is_locked: boolean;
 }
 
+// FIX: Define interface for Session Storage to satisfy TypeScript
+interface SessionData {
+  tempUnlocked?: string[];
+}
+
 // Use 127.0.0.1 to avoid localhost resolution issues in extensions
 const API_BASE_URL = 'http://127.0.0.1:4000/api';
 
@@ -44,21 +49,17 @@ async function syncLocks() {
 }
 
 // --- 2. FREQUENCY TRACKER HELPER ---
-// This function JUST updates the data. It does NOT register listeners.
 async function trackVisitFrequency(urlStr: string) {
   try {
     const url = new URL(urlStr);
     const hostname = url.hostname;
     
-    // Ignore internal pages, new tabs, and extension pages
     if (!hostname || hostname.startsWith('chrome') || hostname === 'newtab' || hostname === 'extensions') return;
 
     const result = await chrome.storage.local.get(['websiteFrequency']);
     const frequencyData = (result.websiteFrequency || {}) as Record<string, number>;
 
-    // Increment count
     frequencyData[hostname] = (frequencyData[hostname] || 0) + 1;
-
     await chrome.storage.local.set({ websiteFrequency: frequencyData });
   } catch (e) {
     // Ignore invalid URLs
@@ -66,14 +67,13 @@ async function trackVisitFrequency(urlStr: string) {
 }
 
 // --- 3. MAIN NAVIGATION LISTENER (BLOCKER & TRACKER) ---
-// This listener runs ONCE per navigation event.
 chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
   if (details.frameId !== 0) return; // Only check main frame
 
   const currentUrl = details.url;
   if (currentUrl.startsWith(chrome.runtime.getURL(''))) return; // Ignore internal pages
 
-  // A. Track Frequency for AI Suggestions
+  // A. Track Frequency
   trackVisitFrequency(currentUrl);
 
   // B. Check Locks
@@ -84,7 +84,22 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
     const targetUrl = new URL(currentUrl);
     const hostname = targetUrl.hostname.toLowerCase();
 
-    // Find if the current site matches any locked site
+    // 1. CHECK IF TEMPORARILY UNLOCKED (The Fix)
+    // We use session storage which clears when the browser is closed
+    
+    // FIX: Cast result to SessionData interface
+    const sessionResult = await chrome.storage.session.get('tempUnlocked');
+    const sessionData = sessionResult as SessionData;
+    const tempUnlocked: string[] = sessionData.tempUnlocked || [];
+    
+    // If this hostname is in the unlocked list, allow access
+    // FIX: TypeScript now knows tempUnlocked is string[] and has .some()
+    if (tempUnlocked.some((u) => hostname.includes(u))) {
+      console.log(`[Background] Allowing temporarily unlocked site: ${hostname}`);
+      return; 
+    }
+
+    // 2. CHECK IF LOCKED
     const matchedLock = lockedSites.find((lock: TabLock) => {
       if (!lock?.is_locked) return false;
       const normalizedLockUrl = normalizeDomain(lock.url);
@@ -94,8 +109,7 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
 
     if (matchedLock) {
       console.log(`[Background] Blocking ${hostname}`);
-      
-      // FIX: Point to 'popup/lock.html' because sync-extension moves files there
+      // Point to popup/lock.html correctly
       const lockPageUrl = chrome.runtime.getURL('popup/lock.html') + 
         `?url=${encodeURIComponent(currentUrl)}&id=${matchedLock.id}`;
       
@@ -107,12 +121,12 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
 });
 
 // --- 4. ALARMS & EVENTS ---
-// These listeners are defined ONCE at the top level.
-
 chrome.runtime.onInstalled.addListener(() => {
   console.log('[Background] Installed. Starting sync alarm.');
   syncLocks();
   chrome.alarms.create('syncLocks', { periodInMinutes: 5 });
+  // Initialize session storage
+  chrome.storage.session.set({ tempUnlocked: [] });
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
@@ -122,11 +136,30 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.type === 'SYNC_LOCKS') {
     syncLocks().then(() => sendResponse({ success: true }));
-    return true; // Keep channel open for async response
+    return true; 
   }
   
   if (msg.type === 'UNLOCK_SITE') {
-    console.log('[Background] Unlocking site temporarily (User PIN verified)');
-    sendResponse({ success: true });
+    const urlToUnlock = msg.url;
+    const hostname = normalizeDomain(urlToUnlock);
+    
+    if (hostname) {
+        console.log(`[Background] Unlocking ${hostname} temporarily`);
+        
+        // Add to Session Storage
+        chrome.storage.session.get('tempUnlocked').then((data) => {
+            // FIX: Explicitly cast and type the list
+            const sessionData = data as SessionData;
+            const list: string[] = sessionData.tempUnlocked || [];
+            
+            // FIX: TypeScript now knows list is string[]
+            if (!list.includes(hostname)) {
+                list.push(hostname);
+                chrome.storage.session.set({ tempUnlocked: list });
+            }
+            sendResponse({ success: true });
+        });
+        return true; // Async response
+    }
   }
 });

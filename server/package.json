@@ -8,7 +8,8 @@
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "clear-locks": "node src/scripts/clearAllLocks.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
