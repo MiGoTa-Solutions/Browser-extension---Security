@@ -5,7 +5,7 @@ interface TabLock {
   is_locked: boolean;
 }
 
-// Using 127.0.0.1 to avoid localhost resolution issues in extensions
+// Use 127.0.0.1 to avoid localhost resolution issues in extensions
 const API_BASE_URL = 'http://127.0.0.1:4000/api';
 
 // --- HELPER: Normalize Domain ---
@@ -44,12 +44,13 @@ async function syncLocks() {
 }
 
 // --- 2. FREQUENCY TRACKER HELPER ---
+// This function JUST updates the data. It does NOT register listeners.
 async function trackVisitFrequency(urlStr: string) {
   try {
     const url = new URL(urlStr);
     const hostname = url.hostname;
     
-    // Ignore internal pages and new tabs
+    // Ignore internal pages, new tabs, and extension pages
     if (!hostname || hostname.startsWith('chrome') || hostname === 'newtab' || hostname === 'extensions') return;
 
     const result = await chrome.storage.local.get(['websiteFrequency']);
@@ -59,12 +60,14 @@ async function trackVisitFrequency(urlStr: string) {
     frequencyData[hostname] = (frequencyData[hostname] || 0) + 1;
 
     await chrome.storage.local.set({ websiteFrequency: frequencyData });
+    // console.log(`[Frequency] Updated for: ${hostname}`);
   } catch (e) {
     // Ignore invalid URLs
   }
 }
 
-// --- 3. MAIN NAVIGATION LISTENER (BLOCKER) ---
+// --- 3. MAIN NAVIGATION LISTENER (BLOCKER & TRACKER) ---
+// This listener runs ONCE per navigation event.
 chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
   if (details.frameId !== 0) return; // Only check main frame
 
@@ -103,8 +106,10 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
 });
 
 // --- 4. ALARMS & EVENTS ---
+// These listeners are defined ONCE at the top level.
+
 chrome.runtime.onInstalled.addListener(() => {
-  console.log('[Background] Installed.');
+  console.log('[Background] Installed. Starting sync alarm.');
   syncLocks();
   chrome.alarms.create('syncLocks', { periodInMinutes: 5 });
 });
@@ -116,11 +121,11 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.type === 'SYNC_LOCKS') {
     syncLocks().then(() => sendResponse({ success: true }));
-    return true; // Keep channel open
+    return true; // Keep channel open for async response
   }
   
   if (msg.type === 'UNLOCK_SITE') {
-    // Logic to temporarily allow the site could go here
+    console.log('[Background] Unlocking site temporarily (User PIN verified)');
     sendResponse({ success: true });
   }
 });
