@@ -94,7 +94,9 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
 
     if (matchedLock) {
       console.log(`[Background] Blocking ${hostname}`);
-      const lockPageUrl = chrome.runtime.getURL('lock.html') + 
+      
+      // FIX: Point to 'popup/lock.html' because sync-extension moves files there
+      const lockPageUrl = chrome.runtime.getURL('popup/lock.html') + 
         `?url=${encodeURIComponent(currentUrl)}&id=${matchedLock.id}`;
       
       chrome.tabs.update(details.tabId, { url: lockPageUrl });

@@ -1,5 +1,6 @@
 const API_BASE_URL = 'http://127.0.0.1:4000/api';
-const GEMINI_API_KEY = 'AIzaSyDvHWTKIxHxGo1IWwEPZNqzvnBYuzUFVDc'; // Friend's Key
+// UPDATED KEY
+const GEMINI_API_KEY = 'AIzaSyAt5C9kLi8W4khsQrmKTtfWtn6N_W0WP9k'; 
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
 
 // --- INJECT STYLES ---
@@ -51,7 +52,7 @@ async function init() {
 
   const btn = document.createElement('button');
   btn.id = 'ss-float-btn';
-  btn.innerHTML = '🔒';
+  btn.innerHTML = '白';
   btn.onclick = handleLockClick;
   document.body.appendChild(btn);
 }
@@ -65,7 +66,7 @@ async function handleLockClick() {
   }
 
   const btn = document.getElementById('ss-float-btn');
-  if (btn) btn.innerHTML = '⏳';
+  if (btn) btn.innerHTML = '竢ｳ';
   
   try {
     const prompt = `Analyze ${window.location.href}. Return valid JSON only: {"description": "string", "pros": ["string"], "cons": ["string"]}`;
@@ -76,7 +77,19 @@ async function handleLockClick() {
       body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
     });
     
+    // FIX: Handle API Errors (like 429 Quota Exceeded)
+    if (!res.ok) {
+      if (res.status === 429) throw new Error('API Quota Exceeded. Please try again later.');
+      throw new Error(`API Error: ${res.status} ${res.statusText}`);
+    }
+
     const apiData = await res.json();
+    
+    // FIX: Handle Empty/Blocked AI Responses
+    if (!apiData.candidates || !apiData.candidates[0] || !apiData.candidates[0].content) {
+      throw new Error('AI returned no analysis (Safety Block or Empty Response).');
+    }
+
     // Robust JSON parsing
     let jsonText = apiData.candidates[0].content.parts[0].text;
     jsonText = jsonText.replace(/```json/g, '').replace(/```/g, '').trim();
@@ -84,11 +97,12 @@ async function handleLockClick() {
     const analysis: SiteAnalysis = JSON.parse(jsonText);
     showPopup(analysis, auth_token);
 
-  } catch (e) {
-    alert('AI Analysis failed or API Key is invalid.');
-    console.error(e);
+  } catch (e: any) {
+    console.error('SecureShield AI Error:', e);
+    // Show a user-friendly alert instead of crashing
+    alert(`Analysis Failed: ${e.message}`);
   } finally {
-    if (btn) btn.innerHTML = '🔒';
+    if (btn) btn.innerHTML = '白';
   }
 }
 
@@ -105,7 +119,7 @@ function showPopup(data: SiteAnalysis, token: string) {
       <ul>${data.cons.map(c => `<li>${c}</li>`).join('')}</ul>
       <div style="text-align:center; margin-top:20px">
         <button class="ss-btn ss-btn-danger" id="ss-close">Close</button>
-        <button class="ss-btn ss-btn-secondary" id="ss-chat">💬 Chat with AI</button>
+        <button class="ss-btn ss-btn-secondary" id="ss-chat">町 Chat with AI</button>
         <button class="ss-btn ss-btn-primary" id="ss-confirm">Lock Site</button>
       </div>
     </div>
@@ -191,6 +205,12 @@ function showChatOverlay(context: string) {
       });
       
       const data = await res.json();
+      
+      // FIX: Handle API errors in chat
+      if (!res.ok || !data.candidates || !data.candidates[0]) {
+        throw new Error('AI Error');
+      }
+
       const reply = data.candidates[0].content.parts[0].text;
       
       // AI Msg
