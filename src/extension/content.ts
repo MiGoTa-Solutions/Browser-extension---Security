@@ -57,7 +57,6 @@ async function init() {
 }
 
 async function handleLockClick() {
-  // FIX: Explicitly type the storage response
   const data = await chrome.storage.local.get('auth_token') as StorageData;
   const auth_token = data.auth_token;
 
@@ -83,7 +82,7 @@ async function handleLockClick() {
     jsonText = jsonText.replace(/```json/g, '').replace(/```/g, '').trim();
     
     const analysis: SiteAnalysis = JSON.parse(jsonText);
-    showPopup(analysis, auth_token); // auth_token is now guaranteed to be string
+    showPopup(analysis, auth_token);
 
   } catch (e) {
     alert('AI Analysis failed or API Key is invalid.');
