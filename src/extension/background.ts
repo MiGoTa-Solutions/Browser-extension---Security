@@ -5,9 +5,13 @@ interface TabLock {
   is_locked: boolean;
 }
 
-// FIX: Define interface for Session Storage to satisfy TypeScript
-interface SessionData {
-  tempUnlocked?: string[];
+// Interface for our Local Storage Whitelist
+interface LocalData {
+  // Stores domains that are locked on server but unlocked by user PIN
+  unlockedExceptions?: string[]; 
+  lockedSites?: TabLock[];
+  auth_token?: string;
+  websiteFrequency?: Record<string, number>;
 }
 
 // Use 127.0.0.1 to avoid localhost resolution issues in extensions
@@ -23,7 +27,7 @@ function normalizeDomain(value?: string | null): string | null {
   }
 }
 
-// --- 1. SYNC LOCKS FROM SERVER ---
+// --- 1. SYNC LOCKS FROM SERVER (High Frequency) ---
 async function syncLocks() {
   try {
     const data = await chrome.storage.local.get('auth_token');
@@ -44,7 +48,7 @@ async function syncLocks() {
       console.log('[Background] Locks synced:', result.locks.length);
     }
   } catch (error) {
-    console.error('[Background] Sync failed:', error);
+    // Silent fail for connection errors to avoid console spam
   }
 }
 
@@ -77,29 +81,24 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
   trackVisitFrequency(currentUrl);
 
   // B. Check Locks
-  const { lockedSites } = await chrome.storage.local.get('lockedSites');
+  const data = await chrome.storage.local.get(['lockedSites', 'unlockedExceptions']) as LocalData;
+  const lockedSites = data.lockedSites || [];
+  const unlockedExceptions = data.unlockedExceptions || [];
+
   if (!Array.isArray(lockedSites) || lockedSites.length === 0) return;
 
   try {
     const targetUrl = new URL(currentUrl);
     const hostname = targetUrl.hostname.toLowerCase();
 
-    // 1. CHECK IF TEMPORARILY UNLOCKED (The Fix)
-    // We use session storage which clears when the browser is closed
-    
-    // FIX: Cast result to SessionData interface
-    const sessionResult = await chrome.storage.session.get('tempUnlocked');
-    const sessionData = sessionResult as SessionData;
-    const tempUnlocked: string[] = sessionData.tempUnlocked || [];
-    
-    // If this hostname is in the unlocked list, allow access
-    // FIX: TypeScript now knows tempUnlocked is string[] and has .some()
-    if (tempUnlocked.some((u) => hostname.includes(u))) {
-      console.log(`[Background] Allowing temporarily unlocked site: ${hostname}`);
+    // 1. CHECK EXCEPTIONS (User manually unlocked this via PIN)
+    // This allows the site to remain open until manually re-locked
+    if (unlockedExceptions.some((u) => hostname.includes(u))) {
+      console.log(`[Background] Allowing exception: ${hostname}`);
       return; 
     }
 
-    // 2. CHECK IF LOCKED
+    // 2. CHECK SERVER LOCKS
     const matchedLock = lockedSites.find((lock: TabLock) => {
       if (!lock?.is_locked) return false;
       const normalizedLockUrl = normalizeDomain(lock.url);
@@ -109,7 +108,6 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
 
     if (matchedLock) {
       console.log(`[Background] Blocking ${hostname}`);
-      // Point to popup/lock.html correctly
       const lockPageUrl = chrome.runtime.getURL('popup/lock.html') + 
         `?url=${encodeURIComponent(currentUrl)}&id=${matchedLock.id}`;
       
@@ -120,18 +118,17 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
   }
 });
 
-// --- 4. ALARMS & EVENTS ---
+// --- 4. EVENTS & TIMERS ---
+
 chrome.runtime.onInstalled.addListener(() => {
-  console.log('[Background] Installed. Starting sync alarm.');
+  console.log('[Background] Installed.');
   syncLocks();
-  chrome.alarms.create('syncLocks', { periodInMinutes: 5 });
-  // Initialize session storage
-  chrome.storage.session.set({ tempUnlocked: [] });
+  // We use setInterval for high-frequency polling (5s) as requested
+  setInterval(syncLocks, 5000);
 });
 
-chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === 'syncLocks') syncLocks();
-});
+// Also start interval on load (service worker wakeup)
+setInterval(syncLocks, 5000);
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.type === 'SYNC_LOCKS') {
@@ -139,27 +136,37 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return true; 
   }
   
+  // HANDLE UNLOCK (Add to Exception List)
   if (msg.type === 'UNLOCK_SITE') {
     const urlToUnlock = msg.url;
     const hostname = normalizeDomain(urlToUnlock);
     
     if (hostname) {
-        console.log(`[Background] Unlocking ${hostname} temporarily`);
-        
-        // Add to Session Storage
-        chrome.storage.session.get('tempUnlocked').then((data) => {
-            // FIX: Explicitly cast and type the list
-            const sessionData = data as SessionData;
-            const list: string[] = sessionData.tempUnlocked || [];
-            
-            // FIX: TypeScript now knows list is string[]
+        console.log(`[Background] Adding Exception: ${hostname}`);
+        chrome.storage.local.get('unlockedExceptions').then((data) => {
+            const list: string[] = (data as LocalData).unlockedExceptions || [];
             if (!list.includes(hostname)) {
                 list.push(hostname);
-                chrome.storage.session.set({ tempUnlocked: list });
+                chrome.storage.local.set({ unlockedExceptions: list });
             }
             sendResponse({ success: true });
         });
-        return true; // Async response
+        return true; 
+    }
+  }
+
+  // HANDLE RE-LOCK (Remove from Exception List)
+  if (msg.type === 'RELOCK_SITE') {
+    const hostname = normalizeDomain(msg.url); // We expect hostname or full url
+    if (hostname) {
+      console.log(`[Background] Re-locking: ${hostname}`);
+      chrome.storage.local.get('unlockedExceptions').then((data) => {
+        let list: string[] = (data as LocalData).unlockedExceptions || [];
+        list = list.filter(domain => !hostname.includes(domain) && !domain.includes(hostname));
+        chrome.storage.local.set({ unlockedExceptions: list });
+        sendResponse({ success: true });
+      });
+      return true;
     }
   }
 });

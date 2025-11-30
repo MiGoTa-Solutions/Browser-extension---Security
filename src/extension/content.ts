@@ -1,5 +1,4 @@
 const API_BASE_URL = 'http://127.0.0.1:4000/api';
-// UPDATED KEY
 const GEMINI_API_KEY = 'AIzaSyAt5C9kLi8W4khsQrmKTtfWtn6N_W0WP9k'; 
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
 
@@ -8,6 +7,10 @@ const style = document.createElement('style');
 style.textContent = `
   #ss-float-btn { position: fixed; bottom: 24px; right: 24px; width: 56px; height: 56px; border-radius: 50%; background: linear-gradient(135deg, #6c63ff, #5850d6); color: white; border: none; font-size: 24px; cursor: pointer; z-index: 2147483647; box-shadow: 0 4px 16px rgba(108,99,255,0.4); display: flex; align-items: center; justify-content: center; transition: transform 0.2s; }
   #ss-float-btn:hover { transform: scale(1.1); }
+  
+  /* Red Button Style for Re-Locking */
+  #ss-float-btn.ss-unlocked { background: linear-gradient(135deg, #e74c3c, #c0392b); box-shadow: 0 4px 16px rgba(231,76,60,0.4); }
+
   .ss-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(5,8,22,0.85); backdrop-filter: blur(8px); z-index: 2147483647; display: flex; justify-content: center; align-items: center; }
   .ss-popup { background: rgba(11,20,40,0.95); padding: 32px; border-radius: 16px; width: 90%; max-width: 500px; color: #f8fbff; font-family: system-ui, sans-serif; border: 1px solid rgba(255,255,255,0.1); max-height: 80vh; overflow-y: auto; display: flex; flex-direction: column; }
   .ss-btn { padding: 10px 20px; border-radius: 8px; border: none; cursor: pointer; margin: 5px; font-weight: 600; }
@@ -26,35 +29,56 @@ interface SiteAnalysis {
   pros: string[];
   cons: string[];
 }
-
 interface TabLock {
   url: string;
   is_locked: boolean;
 }
-
-// Define expected storage structure
 interface StorageData {
   lockedSites?: TabLock[];
+  unlockedExceptions?: string[];
   auth_token?: string;
 }
 
+// --- STATE TRACKING ---
+let isRelockMode = false;
+
 // --- MAIN LOGIC ---
 async function init() {
-  // Check if site is locked
-  const data = await chrome.storage.local.get('lockedSites') as StorageData;
-  const lockedSites = data.lockedSites;
+  const data = await chrome.storage.local.get(['lockedSites', 'unlockedExceptions']) as StorageData;
+  const lockedSites = data.lockedSites || [];
+  const unlockedExceptions = data.unlockedExceptions || [];
   const hostname = window.location.hostname.toLowerCase();
   
-  // Don't show button if site is already locked
-  if (Array.isArray(lockedSites) && lockedSites.some((l) => l.is_locked && hostname.includes(l.url))) {
-    return; 
+  // Logic to determine if we show the button
+  const isServerLocked = lockedSites.some((l) => l.is_locked && hostname.includes(l.url));
+  const isLocallyUnlocked = unlockedExceptions.some((u) => hostname.includes(u));
+
+  // Case 1: Site is Locked AND NOT Unlocked -> Button hidden (Blocker handles it)
+  // Case 2: Site is Locked BUT Locally Unlocked -> SHOW BUTTON (Red/Lock icon)
+  // Case 3: Site is Not Locked -> SHOW BUTTON (Purple/Shield icon)
+
+  if (isServerLocked && !isLocallyUnlocked) {
+    return; // Should be blocked anyway
   }
 
   const btn = document.createElement('button');
   btn.id = 'ss-float-btn';
-  btn.innerHTML = '白';
-  btn.onclick = handleLockClick;
   document.body.appendChild(btn);
+
+  if (isServerLocked && isLocallyUnlocked) {
+    // Mode: Re-Lock
+    isRelockMode = true;
+    btn.innerHTML = '🔒'; // Lock Icon
+    btn.classList.add('ss-unlocked'); // Red color
+    btn.title = "Site is temporarily unlocked. Click to Re-Lock.";
+  } else {
+    // Mode: New Lock
+    isRelockMode = false;
+    btn.innerHTML = '白'; // Shield Icon
+    btn.title = "SecureShield AI Analysis";
+  }
+
+  btn.onclick = handleLockClick;
 }
 
 async function handleLockClick() {
@@ -66,6 +90,19 @@ async function handleLockClick() {
   }
 
   const btn = document.getElementById('ss-float-btn');
+
+  // --- BRANCH 1: RE-LOCK ---
+  if (isRelockMode) {
+    if (confirm('Re-lock this website? You will need your PIN to access it again.')) {
+        if(btn) btn.innerHTML = '...';
+        await chrome.runtime.sendMessage({ type: 'RELOCK_SITE', url: window.location.hostname });
+        alert('Site Locked.');
+        window.location.reload();
+    }
+    return;
+  }
+
+  // --- BRANCH 2: GEMINI ANALYSIS & LOCK ---
   if (btn) btn.innerHTML = '竢ｳ';
   
   try {
@@ -77,7 +114,6 @@ async function handleLockClick() {
       body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
     });
     
-    // FIX: Handle API Errors (like 429 Quota Exceeded)
     if (!res.ok) {
       if (res.status === 429) throw new Error('API Quota Exceeded. Please try again later.');
       throw new Error(`API Error: ${res.status} ${res.statusText}`);
@@ -85,12 +121,10 @@ async function handleLockClick() {
 
     const apiData = await res.json();
     
-    // FIX: Handle Empty/Blocked AI Responses
     if (!apiData.candidates || !apiData.candidates[0] || !apiData.candidates[0].content) {
       throw new Error('AI returned no analysis (Safety Block or Empty Response).');
     }
 
-    // Robust JSON parsing
     let jsonText = apiData.candidates[0].content.parts[0].text;
     jsonText = jsonText.replace(/```json/g, '').replace(/```/g, '').trim();
     
@@ -99,7 +133,6 @@ async function handleLockClick() {
 
   } catch (e: any) {
     console.error('SecureShield AI Error:', e);
-    // Show a user-friendly alert instead of crashing
     alert(`Analysis Failed: ${e.message}`);
   } finally {
     if (btn) btn.innerHTML = '白';
@@ -206,14 +239,12 @@ function showChatOverlay(context: string) {
       
       const data = await res.json();
       
-      // FIX: Handle API errors in chat
       if (!res.ok || !data.candidates || !data.candidates[0]) {
         throw new Error('AI Error');
       }
 
       const reply = data.candidates[0].content.parts[0].text;
       
-      // AI Msg
       const aiDiv = document.createElement('div');
       aiDiv.className = 'ss-chat-msg ss-msg-ai';
       aiDiv.textContent = reply;
