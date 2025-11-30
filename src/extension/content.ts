@@ -1,4 +1,3 @@
-
 const API_BASE_URL = 'http://127.0.0.1:4000/api';
 const GEMINI_API_KEY = 'AIzaSyDvHWTKIxHxGo1IWwEPZNqzvnBYuzUFVDc'; // Friend's Key
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
@@ -32,14 +31,22 @@ interface TabLock {
   is_locked: boolean;
 }
 
+// Define expected storage structure
+interface StorageData {
+  lockedSites?: TabLock[];
+  auth_token?: string;
+}
+
 // --- MAIN LOGIC ---
 async function init() {
   // Check if site is locked
-  const { lockedSites } = await chrome.storage.local.get('lockedSites');
+  const data = await chrome.storage.local.get('lockedSites') as StorageData;
+  const lockedSites = data.lockedSites;
   const hostname = window.location.hostname.toLowerCase();
   
-  if (Array.isArray(lockedSites) && lockedSites.some((l: any) => l.is_locked && hostname.includes(l.url))) {
-    return; // Don't show button on locked sites
+  // Don't show button if site is already locked
+  if (Array.isArray(lockedSites) && lockedSites.some((l) => l.is_locked && hostname.includes(l.url))) {
+    return; 
   }
 
   const btn = document.createElement('button');
@@ -50,14 +57,19 @@ async function init() {
 }
 
 async function handleLockClick() {
-  const { auth_token } = await chrome.storage.local.get('auth_token');
-  if (!auth_token) return alert('Please log in to SecureShield extension.');
+  // FIX: Explicitly type the storage response
+  const data = await chrome.storage.local.get('auth_token') as StorageData;
+  const auth_token = data.auth_token;
 
-  const btn = document.getElementById('ss-float-btn')!;
-  btn.innerHTML = '⏳';
+  if (!auth_token || typeof auth_token !== 'string') {
+    return alert('Please log in to SecureShield extension.');
+  }
+
+  const btn = document.getElementById('ss-float-btn');
+  if (btn) btn.innerHTML = '⏳';
   
   try {
-    const prompt = `Analyze ${window.location.href}. Return valid JSON only: {"description": "summary string", "pros": ["pro1", "pro2"], "cons": ["con1", "con2"]}`;
+    const prompt = `Analyze ${window.location.href}. Return valid JSON only: {"description": "string", "pros": ["string"], "cons": ["string"]}`;
     
     const res = await fetch(`${GEMINI_API_URL}?key=${GEMINI_API_KEY}`, {
       method: 'POST',
@@ -65,19 +77,19 @@ async function handleLockClick() {
       body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
     });
     
-    const data = await res.json();
-    // Robust JSON parsing (handles markdown code blocks)
-    let jsonText = data.candidates[0].content.parts[0].text;
+    const apiData = await res.json();
+    // Robust JSON parsing
+    let jsonText = apiData.candidates[0].content.parts[0].text;
     jsonText = jsonText.replace(/```json/g, '').replace(/```/g, '').trim();
     
     const analysis: SiteAnalysis = JSON.parse(jsonText);
-    showPopup(analysis, auth_token);
+    showPopup(analysis, auth_token); // auth_token is now guaranteed to be string
 
   } catch (e) {
     alert('AI Analysis failed or API Key is invalid.');
     console.error(e);
   } finally {
-    if(btn) btn.innerHTML = '🔒';
+    if (btn) btn.innerHTML = '🔒';
   }
 }
 
@@ -94,24 +106,24 @@ function showPopup(data: SiteAnalysis, token: string) {
       <ul>${data.cons.map(c => `<li>${c}</li>`).join('')}</ul>
       <div style="text-align:center; margin-top:20px">
         <button class="ss-btn ss-btn-danger" id="ss-close">Close</button>
-        <button class="ss-btn ss-btn-secondary" id="ss-chat">💬 Chat AI</button>
+        <button class="ss-btn ss-btn-secondary" id="ss-chat">💬 Chat with AI</button>
         <button class="ss-btn ss-btn-primary" id="ss-confirm">Lock Site</button>
       </div>
     </div>
   `;
   document.body.appendChild(overlay);
   
-  // Close Button
-  document.getElementById('ss-close')!.onclick = () => overlay.remove();
+  const closeBtn = document.getElementById('ss-close');
+  if (closeBtn) closeBtn.onclick = () => overlay.remove();
   
-  // Chat Button
-  document.getElementById('ss-chat')!.onclick = () => {
+  const chatBtn = document.getElementById('ss-chat');
+  if (chatBtn) chatBtn.onclick = () => {
     overlay.remove();
     showChatOverlay(data.description);
   };
 
-  // Confirm Lock Button
-  document.getElementById('ss-confirm')!.onclick = async () => {
+  const confirmBtn = document.getElementById('ss-confirm');
+  if (confirmBtn) confirmBtn.onclick = async () => {
     try {
       const res = await fetch(`${API_BASE_URL}/locks`, {
         method: 'POST',
@@ -121,7 +133,7 @@ function showPopup(data: SiteAnalysis, token: string) {
 
       if(res.ok) {
         chrome.runtime.sendMessage({ type: 'SYNC_LOCKS' });
-        alert('Locked! Refreshing page...');
+        alert('Locked! Refreshing...');
         window.location.reload();
       } else {
         alert('Failed to lock site.');
@@ -151,14 +163,15 @@ function showChatOverlay(context: string) {
   `;
   document.body.appendChild(overlay);
 
-  const box = document.getElementById('ss-chat-box')!;
+  const box = document.getElementById('ss-chat-box');
   const input = document.getElementById('ss-chat-input') as HTMLInputElement;
+  const sendBtn = document.getElementById('ss-send');
+  const closeBtn = document.getElementById('ss-close-chat');
 
-  // Close Chat
-  document.getElementById('ss-close-chat')!.onclick = () => overlay.remove();
+  if (closeBtn) closeBtn.onclick = () => overlay.remove();
   
-  // Send Message Logic
   const sendMessage = async () => {
+    if (!input || !box) return;
     const msg = input.value.trim();
     if (!msg) return;
     
@@ -195,8 +208,8 @@ function showChatOverlay(context: string) {
     box.scrollTop = box.scrollHeight;
   };
 
-  document.getElementById('ss-send')!.onclick = sendMessage;
-  input.addEventListener('keypress', (e) => { if(e.key === 'Enter') sendMessage(); });
+  if (sendBtn) sendBtn.onclick = sendMessage;
+  if (input) input.addEventListener('keypress', (e) => { if(e.key === 'Enter') sendMessage(); });
 }
 
 // Initialize

@@ -1,4 +1,3 @@
-
 // Define types locally for the service worker
 interface TabLock {
   id: number;
@@ -61,7 +60,6 @@ async function trackVisitFrequency(urlStr: string) {
     frequencyData[hostname] = (frequencyData[hostname] || 0) + 1;
 
     await chrome.storage.local.set({ websiteFrequency: frequencyData });
-    // console.log(`[Frequency] Updated for: ${hostname}`);
   } catch (e) {
     // Ignore invalid URLs
   }

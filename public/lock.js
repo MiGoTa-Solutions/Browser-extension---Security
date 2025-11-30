@@ -1,5 +1,5 @@
+// This runs on the lock page
 const API_BASE_URL = 'http://127.0.0.1:4000/api';
-
 
 document.addEventListener('DOMContentLoaded', () => {
     const form = document.getElementById('pinForm');
