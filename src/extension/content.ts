@@ -1,3 +1,4 @@
+
 const API_BASE_URL = 'http://127.0.0.1:4000/api';
 const GEMINI_API_KEY = 'AIzaSyDvHWTKIxHxGo1IWwEPZNqzvnBYuzUFVDc'; // Friend's Key
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
@@ -26,14 +27,19 @@ interface SiteAnalysis {
   cons: string[];
 }
 
+interface TabLock {
+  url: string;
+  is_locked: boolean;
+}
+
 // --- MAIN LOGIC ---
 async function init() {
+  // Check if site is locked
   const { lockedSites } = await chrome.storage.local.get('lockedSites');
   const hostname = window.location.hostname.toLowerCase();
   
-  // Don't show button if site is already locked
   if (Array.isArray(lockedSites) && lockedSites.some((l: any) => l.is_locked && hostname.includes(l.url))) {
-    return; 
+    return; // Don't show button on locked sites
   }
 
   const btn = document.createElement('button');
@@ -51,21 +57,27 @@ async function handleLockClick() {
   btn.innerHTML = '⏳';
   
   try {
-    const prompt = `Analyze ${window.location.href}. Return valid JSON only: {"description": "string", "pros": ["string"], "cons": ["string"]}`;
+    const prompt = `Analyze ${window.location.href}. Return valid JSON only: {"description": "summary string", "pros": ["pro1", "pro2"], "cons": ["con1", "con2"]}`;
+    
     const res = await fetch(`${GEMINI_API_URL}?key=${GEMINI_API_KEY}`, {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
     });
     
     const data = await res.json();
-    const jsonText = data.candidates[0].content.parts[0].text.replace(/```json|```/g, '').trim();
-    const analysis = JSON.parse(jsonText);
+    // Robust JSON parsing (handles markdown code blocks)
+    let jsonText = data.candidates[0].content.parts[0].text;
+    jsonText = jsonText.replace(/```json/g, '').replace(/```/g, '').trim();
+    
+    const analysis: SiteAnalysis = JSON.parse(jsonText);
     showPopup(analysis, auth_token);
+
   } catch (e) {
-    alert('AI Analysis failed.');
+    alert('AI Analysis failed or API Key is invalid.');
     console.error(e);
   } finally {
-    btn.innerHTML = '🔒';
+    if(btn) btn.innerHTML = '🔒';
   }
 }
 
@@ -76,38 +88,48 @@ function showPopup(data: SiteAnalysis, token: string) {
     <div class="ss-popup">
       <h2 style="color:#6c63ff; margin-top:0">Website Analysis</h2>
       <p>${data.description}</p>
-      <h3 style="color:#2ecc71">Why Lock?</h3><ul>${data.pros.map(p=>`<li>${p}</li>`).join('')}</ul>
-      <h3 style="color:#e74c3c">Cons</h3><ul>${data.cons.map(c=>`<li>${c}</li>`).join('')}</ul>
+      <h3 style="color:#2ecc71">Why Lock?</h3>
+      <ul>${data.pros.map(p => `<li>${p}</li>`).join('')}</ul>
+      <h3 style="color:#e74c3c">Cons</h3>
+      <ul>${data.cons.map(c => `<li>${c}</li>`).join('')}</ul>
       <div style="text-align:center; margin-top:20px">
         <button class="ss-btn ss-btn-danger" id="ss-close">Close</button>
-        <button class="ss-btn ss-btn-secondary" id="ss-chat">💬 Chat with AI</button>
+        <button class="ss-btn ss-btn-secondary" id="ss-chat">💬 Chat AI</button>
         <button class="ss-btn ss-btn-primary" id="ss-confirm">Lock Site</button>
       </div>
     </div>
   `;
   document.body.appendChild(overlay);
   
+  // Close Button
   document.getElementById('ss-close')!.onclick = () => overlay.remove();
   
+  // Chat Button
   document.getElementById('ss-chat')!.onclick = () => {
     overlay.remove();
     showChatOverlay(data.description);
   };
 
+  // Confirm Lock Button
   document.getElementById('ss-confirm')!.onclick = async () => {
     try {
       const res = await fetch(`${API_BASE_URL}/locks`, {
-        method: 'POST', headers: {'Content-Type':'application/json', 'Authorization': `Bearer ${token}`},
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify({ url: window.location.hostname, name: document.title })
       });
+
       if(res.ok) {
         chrome.runtime.sendMessage({ type: 'SYNC_LOCKS' });
-        alert('Locked! Refreshing...');
+        alert('Locked! Refreshing page...');
         window.location.reload();
       } else {
-        alert('Failed to lock.');
+        alert('Failed to lock site.');
       }
-    } catch(e) { console.error(e); }
+    } catch(e) {
+      console.error(e);
+      alert('Network Error.');
+    }
   };
 }
 
@@ -132,10 +154,12 @@ function showChatOverlay(context: string) {
   const box = document.getElementById('ss-chat-box')!;
   const input = document.getElementById('ss-chat-input') as HTMLInputElement;
 
-  document.getElementById('ss-close-chat')?.addEventListener('click', () => overlay.remove());
+  // Close Chat
+  document.getElementById('ss-close-chat')!.onclick = () => overlay.remove();
   
+  // Send Message Logic
   const sendMessage = async () => {
-    const msg = input.value;
+    const msg = input.value.trim();
     if (!msg) return;
     
     // User Msg
@@ -148,12 +172,13 @@ function showChatOverlay(context: string) {
 
     // AI API Call
     try {
-      const response = await fetch(`${GEMINI_API_URL}?key=${GEMINI_API_KEY}`, {
+      const res = await fetch(`${GEMINI_API_URL}?key=${GEMINI_API_KEY}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contents: [{ parts: [{ text: `Context: ${context}. User question: ${msg}` }] }] })
+        body: JSON.stringify({ contents: [{ parts: [{ text: `Context: ${context}. User Question: ${msg}` }] }] })
       });
-      const data = await response.json();
+      
+      const data = await res.json();
       const reply = data.candidates[0].content.parts[0].text;
       
       // AI Msg
@@ -161,17 +186,18 @@ function showChatOverlay(context: string) {
       aiDiv.className = 'ss-chat-msg ss-msg-ai';
       aiDiv.textContent = reply;
       box.appendChild(aiDiv);
-      box.scrollTop = box.scrollHeight;
     } catch (e) {
       const errDiv = document.createElement('div');
       errDiv.textContent = "Error getting response.";
       errDiv.style.color = "red";
       box.appendChild(errDiv);
     }
+    box.scrollTop = box.scrollHeight;
   };
 
-  document.getElementById('ss-send')?.addEventListener('click', sendMessage);
+  document.getElementById('ss-send')!.onclick = sendMessage;
   input.addEventListener('keypress', (e) => { if(e.key === 'Enter') sendMessage(); });
 }
 
+// Initialize
 init();

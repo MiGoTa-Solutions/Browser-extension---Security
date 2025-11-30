@@ -1,3 +1,4 @@
+
 // Define types locally for the service worker
 interface TabLock {
   id: number;
