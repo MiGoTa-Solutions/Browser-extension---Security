@@ -27,18 +27,13 @@ function normalizeDomain(value?: string | null): string | null {
   }
 }
 
-// --- 1. SYNC LOCKS FROM SERVER (High Frequency & Debug Mode) ---
+// --- 1. SYNC LOCKS FROM SERVER ---
 async function syncLocks() {
   try {
     const data = await chrome.storage.local.get('auth_token');
     const token = data.auth_token;
     
-    // DEBUG: Check for Auth Token
-    if (!token) {
-        // Only warn once per session to avoid spamming, or use verbose log
-        // console.warn('[Background] Sync Skipped: No Auth Token found.');
-        return;
-    }
+    if (!token) return;
 
     const response = await fetch(`${API_BASE_URL}/locks`, {
       headers: { 'Authorization': `Bearer ${token}` }
@@ -50,14 +45,10 @@ async function syncLocks() {
         lockedSites: result.locks, 
         lastSync: Date.now() 
       });
-      
       console.log(`[Background] Locks synced: ${result.locks.length}`);
-      if (result.locks.length > 0) {
-        console.log('[Background] Locked Domains:', result.locks.map((l: any) => l.url));
-      }
     }
   } catch (error) {
-    // Silent fail for connection errors to avoid console spam
+    // Silent fail
   }
 }
 
@@ -66,30 +57,23 @@ async function trackVisitFrequency(urlStr: string) {
   try {
     const url = new URL(urlStr);
     const hostname = url.hostname;
-    
     if (!hostname || hostname.startsWith('chrome') || hostname === 'newtab' || hostname === 'extensions') return;
 
     const result = await chrome.storage.local.get(['websiteFrequency']);
     const frequencyData = (result.websiteFrequency || {}) as Record<string, number>;
-
     frequencyData[hostname] = (frequencyData[hostname] || 0) + 1;
     await chrome.storage.local.set({ websiteFrequency: frequencyData });
-  } catch (e) {
-    // Ignore invalid URLs
-  }
+  } catch (e) { }
 }
 
-// --- 3. MAIN NAVIGATION LISTENER (BLOCKER & TRACKER) ---
+// --- 3. MAIN NAVIGATION LISTENER ---
 chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
-  if (details.frameId !== 0) return; // Only check main frame
-
+  if (details.frameId !== 0) return; 
   const currentUrl = details.url;
-  if (currentUrl.startsWith(chrome.runtime.getURL(''))) return; // Ignore internal pages
+  if (currentUrl.startsWith(chrome.runtime.getURL(''))) return;
 
-  // A. Track Frequency
   trackVisitFrequency(currentUrl);
 
-  // B. Check Locks
   const data = await chrome.storage.local.get(['lockedSites', 'unlockedExceptions']) as LocalData;
   const lockedSites = data.lockedSites || [];
   const unlockedExceptions = data.unlockedExceptions || [];
@@ -100,8 +84,7 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
     const targetUrl = new URL(currentUrl);
     const hostname = targetUrl.hostname.toLowerCase();
 
-    // 1. CHECK EXCEPTIONS (User manually unlocked this via PIN)
-    // This allows the site to remain open until manually re-locked
+    // 1. CHECK EXCEPTIONS
     if (unlockedExceptions.some((u) => hostname.includes(u))) {
       console.log(`[Background] Allowing exception: ${hostname}`);
       return; 
@@ -119,24 +102,16 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
       console.log(`[Background] Blocking ${hostname}`);
       const lockPageUrl = chrome.runtime.getURL('popup/lock.html') + 
         `?url=${encodeURIComponent(currentUrl)}&id=${matchedLock.id}`;
-      
       chrome.tabs.update(details.tabId, { url: lockPageUrl });
     }
-  } catch (e) {
-    // Ignore URL parsing errors
-  }
+  } catch (e) { }
 });
 
 // --- 4. EVENTS & TIMERS ---
-
 chrome.runtime.onInstalled.addListener(() => {
-  console.log('[Background] Installed.');
   syncLocks();
-  // We use setInterval for high-frequency polling (5s) as requested
   setInterval(syncLocks, 5000);
 });
-
-// Also start interval on load (service worker wakeup)
 setInterval(syncLocks, 5000);
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
@@ -152,22 +127,22 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     
     if (hostname) {
         console.log(`[Background] Adding Exception: ${hostname}`);
+        // Fix: Use async logic to Ensure save completes
         chrome.storage.local.get('unlockedExceptions').then(async (data) => {
             const list: string[] = (data as LocalData).unlockedExceptions || [];
             if (!list.includes(hostname)) {
                 list.push(hostname);
-                // FIX: await the set operation before sending response
                 await chrome.storage.local.set({ unlockedExceptions: list });
             }
             sendResponse({ success: true });
         });
-        return true; // Keep channel open for async response
+        return true; 
     }
   }
 
-  // HANDLE RE-LOCK (Remove from Exception List)
+  // HANDLE RE-LOCK
   if (msg.type === 'RELOCK_SITE') {
-    const hostname = normalizeDomain(msg.url); // We expect hostname or full url
+    const hostname = normalizeDomain(msg.url);
     if (hostname) {
       console.log(`[Background] Re-locking: ${hostname}`);
       chrome.storage.local.get('unlockedExceptions').then(async (data) => {

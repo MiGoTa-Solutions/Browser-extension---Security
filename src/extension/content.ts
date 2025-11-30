@@ -20,6 +20,18 @@ style.textContent = `
   .ss-chat-msg { padding: 8px 12px; border-radius: 8px; margin: 5px 0; max-width: 80%; word-wrap: break-word; }
   .ss-msg-user { background: #6c63ff; color: white; align-self: flex-end; margin-left: auto; }
   .ss-msg-ai { background: #2d3748; color: white; align-self: flex-start; margin-right: auto; }
+
+  /* TOAST NOTIFICATIONS */
+  .ss-toast {
+    position: fixed; top: 24px; left: 50%; transform: translateX(-50%) translateY(-100px);
+    background: #1f2937; color: white; padding: 12px 24px; border-radius: 8px;
+    z-index: 2147483648; font-family: system-ui, sans-serif; font-size: 14px; font-weight: 500;
+    box-shadow: 0 10px 25px rgba(0,0,0,0.2); opacity: 0; transition: all 0.4s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+    display: flex; align-items: center; gap: 10px; border: 1px solid rgba(255,255,255,0.1);
+  }
+  .ss-toast.visible { transform: translateX(-50%) translateY(0); opacity: 1; }
+  .ss-toast.error { background: #991b1b; border-color: #f87171; }
+  .ss-toast.success { background: #065f46; border-color: #34d399; }
 `;
 document.head.appendChild(style);
 
@@ -42,6 +54,20 @@ interface StorageData {
 // --- STATE TRACKING ---
 let isRelockMode = false;
 
+// --- UI HELPERS ---
+function showToast(message: string, type: 'success' | 'error' | 'info' = 'info') {
+  const toast = document.createElement('div');
+  toast.className = `ss-toast ${type}`;
+  const icon = type === 'success' ? '✓' : type === 'error' ? '⚠' : 'ℹ';
+  toast.innerHTML = `<span style="font-size:1.2em">${icon}</span><span>${message}</span>`;
+  document.body.appendChild(toast);
+  requestAnimationFrame(() => toast.classList.add('visible'));
+  setTimeout(() => {
+    toast.classList.remove('visible');
+    setTimeout(() => toast.remove(), 400);
+  }, 3000);
+}
+
 // --- MAIN LOGIC ---
 async function init() {
   const data = await chrome.storage.local.get(['lockedSites', 'unlockedExceptions']) as StorageData;
@@ -49,32 +75,23 @@ async function init() {
   const unlockedExceptions = data.unlockedExceptions || [];
   const hostname = window.location.hostname.toLowerCase();
   
-  // Logic to determine if we show the button
   const isServerLocked = lockedSites.some((l) => l.is_locked && hostname.includes(l.url));
   const isLocallyUnlocked = unlockedExceptions.some((u) => hostname.includes(u));
 
-  // Case 1: Site is Locked AND NOT Unlocked -> Button hidden (Blocker handles it)
-  // Case 2: Site is Locked BUT Locally Unlocked -> SHOW BUTTON (Red/Lock icon)
-  // Case 3: Site is Not Locked -> SHOW BUTTON (Purple/Shield icon)
-
-  if (isServerLocked && !isLocallyUnlocked) {
-    return; // Should be blocked anyway
-  }
+  if (isServerLocked && !isLocallyUnlocked) return;
 
   const btn = document.createElement('button');
   btn.id = 'ss-float-btn';
   document.body.appendChild(btn);
 
   if (isServerLocked && isLocallyUnlocked) {
-    // Mode: Re-Lock
     isRelockMode = true;
-    btn.innerHTML = '🔒'; // Lock Icon
-    btn.classList.add('ss-unlocked'); // Red color
+    btn.innerHTML = '🔒';
+    btn.classList.add('ss-unlocked');
     btn.title = "Site is temporarily unlocked. Click to Re-Lock.";
   } else {
-    // Mode: New Lock
     isRelockMode = false;
-    btn.innerHTML = '白'; // Shield Icon
+    btn.innerHTML = '白';
     btn.title = "SecureShield AI Analysis";
   }
 
@@ -86,23 +103,23 @@ async function handleLockClick() {
   const auth_token = data.auth_token;
 
   if (!auth_token || typeof auth_token !== 'string') {
-    return alert('Please log in to SecureShield extension.');
+    return showToast('Please log in to SecureShield extension.', 'error');
   }
 
   const btn = document.getElementById('ss-float-btn');
 
-  // --- BRANCH 1: RE-LOCK ---
+  // RE-LOCK LOGIC
   if (isRelockMode) {
-    if (confirm('Re-lock this website? You will need your PIN to access it again.')) {
+    if (confirm('Re-lock this website?')) {
         if(btn) btn.innerHTML = '...';
         await chrome.runtime.sendMessage({ type: 'RELOCK_SITE', url: window.location.hostname });
-        alert('Site Locked.');
-        window.location.reload();
+        showToast('Site Locked!', 'success');
+        setTimeout(() => window.location.reload(), 1000);
     }
     return;
   }
 
-  // --- BRANCH 2: GEMINI ANALYSIS & LOCK ---
+  // ANALYSIS LOGIC
   if (btn) btn.innerHTML = '竢ｳ';
   
   try {
@@ -115,14 +132,13 @@ async function handleLockClick() {
     });
     
     if (!res.ok) {
-      if (res.status === 429) throw new Error('API Quota Exceeded. Please try again later.');
-      throw new Error(`API Error: ${res.status} ${res.statusText}`);
+      if (res.status === 429) throw new Error('Quota Exceeded. Try again later.');
+      throw new Error(`API Error: ${res.status}`);
     }
 
     const apiData = await res.json();
-    
     if (!apiData.candidates || !apiData.candidates[0] || !apiData.candidates[0].content) {
-      throw new Error('AI returned no analysis (Safety Block or Empty Response).');
+      throw new Error('No analysis returned.');
     }
 
     let jsonText = apiData.candidates[0].content.parts[0].text;
@@ -133,7 +149,7 @@ async function handleLockClick() {
 
   } catch (e: any) {
     console.error('SecureShield AI Error:', e);
-    alert(`Analysis Failed: ${e.message}`);
+    showToast(e.message, 'error');
   } finally {
     if (btn) btn.innerHTML = '白';
   }
@@ -179,14 +195,13 @@ function showPopup(data: SiteAnalysis, token: string) {
 
       if(res.ok) {
         chrome.runtime.sendMessage({ type: 'SYNC_LOCKS' });
-        alert('Locked! Refreshing...');
-        window.location.reload();
+        showToast('Site Locked! Refreshing...', 'success');
+        setTimeout(() => window.location.reload(), 1000);
       } else {
-        alert('Failed to lock site.');
+        showToast('Failed to lock site.', 'error');
       }
     } catch(e) {
-      console.error(e);
-      alert('Network Error.');
+      showToast('Network Error.', 'error');
     }
   };
 }
@@ -221,7 +236,6 @@ function showChatOverlay(context: string) {
     const msg = input.value.trim();
     if (!msg) return;
     
-    // User Msg
     const userDiv = document.createElement('div');
     userDiv.className = 'ss-chat-msg ss-msg-user';
     userDiv.textContent = msg;
@@ -229,25 +243,18 @@ function showChatOverlay(context: string) {
     input.value = '';
     box.scrollTop = box.scrollHeight;
 
-    // AI API Call
     try {
       const res = await fetch(`${GEMINI_API_URL}?key=${GEMINI_API_KEY}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ contents: [{ parts: [{ text: `Context: ${context}. User Question: ${msg}` }] }] })
       });
-      
       const data = await res.json();
-      
-      if (!res.ok || !data.candidates || !data.candidates[0]) {
-        throw new Error('AI Error');
-      }
-
-      const reply = data.candidates[0].content.parts[0].text;
+      if (!res.ok || !data.candidates) throw new Error('AI Error');
       
       const aiDiv = document.createElement('div');
       aiDiv.className = 'ss-chat-msg ss-msg-ai';
-      aiDiv.textContent = reply;
+      aiDiv.textContent = data.candidates[0].content.parts[0].text;
       box.appendChild(aiDiv);
     } catch (e) {
       const errDiv = document.createElement('div');
@@ -262,5 +269,4 @@ function showChatOverlay(context: string) {
   if (input) input.addEventListener('keypress', (e) => { if(e.key === 'Enter') sendMessage(); });
 }
 
-// Initialize
 init();
