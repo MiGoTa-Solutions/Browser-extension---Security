@@ -36,7 +36,7 @@ async function syncLocks() {
     // DEBUG: Check for Auth Token
     if (!token) {
         // Only warn once per session to avoid spamming, or use verbose log
-        console.warn('[Background] Sync Skipped: No Auth Token found. Please log in via Extension Popup.');
+        // console.warn('[Background] Sync Skipped: No Auth Token found.');
         return;
     }
 
@@ -51,7 +51,6 @@ async function syncLocks() {
         lastSync: Date.now() 
       });
       
-      // DEBUG: Log the count and the actual list
       console.log(`[Background] Locks synced: ${result.locks.length}`);
       if (result.locks.length > 0) {
         console.log('[Background] Locked Domains:', result.locks.map((l: any) => l.url));
@@ -153,15 +152,16 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     
     if (hostname) {
         console.log(`[Background] Adding Exception: ${hostname}`);
-        chrome.storage.local.get('unlockedExceptions').then((data) => {
+        chrome.storage.local.get('unlockedExceptions').then(async (data) => {
             const list: string[] = (data as LocalData).unlockedExceptions || [];
             if (!list.includes(hostname)) {
                 list.push(hostname);
-                chrome.storage.local.set({ unlockedExceptions: list });
+                // FIX: await the set operation before sending response
+                await chrome.storage.local.set({ unlockedExceptions: list });
             }
             sendResponse({ success: true });
         });
-        return true; 
+        return true; // Keep channel open for async response
     }
   }
 
@@ -170,10 +170,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     const hostname = normalizeDomain(msg.url); // We expect hostname or full url
     if (hostname) {
       console.log(`[Background] Re-locking: ${hostname}`);
-      chrome.storage.local.get('unlockedExceptions').then((data) => {
+      chrome.storage.local.get('unlockedExceptions').then(async (data) => {
         let list: string[] = (data as LocalData).unlockedExceptions || [];
         list = list.filter(domain => !hostname.includes(domain) && !domain.includes(hostname));
-        chrome.storage.local.set({ unlockedExceptions: list });
+        await chrome.storage.local.set({ unlockedExceptions: list });
         sendResponse({ success: true });
       });
       return true;

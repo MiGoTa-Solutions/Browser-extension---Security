@@ -39,15 +39,20 @@ document.addEventListener('DOMContentLoaded', () => {
 
             if (response.ok) {
                 // Unlock successful
-                // 1. Notify background to whitelist/unlock
-                chrome.runtime.sendMessage({ type: 'UNLOCK_SITE', url: targetUrl });
-                
-                // 2. Redirect back to original site
-                if (targetUrl) {
-                    window.location.href = targetUrl;
-                } else {
-                    window.close(); // Close tab if no target
-                }
+                // FIX: Wait for background to confirm storage update before reloading
+                chrome.runtime.sendMessage({ type: 'UNLOCK_SITE', url: targetUrl }, (bgResponse) => {
+                    if (bgResponse && bgResponse.success) {
+                        if (targetUrl) {
+                            window.location.href = targetUrl;
+                        } else {
+                            window.close();
+                        }
+                    } else {
+                        // Fallback if background fails (rare)
+                        console.error("Background failed to unlock");
+                        window.location.reload();
+                    }
+                });
             } else {
                 // Unlock failed
                 errorMsg.style.display = 'block';
