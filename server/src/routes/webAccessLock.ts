@@ -1,98 +1,169 @@
-import { Router, Response } from 'express';
-import { z } from 'zod';
+import { Router, Request, Response, NextFunction } from 'express';
+import type { ResultSetHeader, RowDataPacket } from 'mysql2';
 import { pool } from '../config/database';
-import { requireAuth, AuthenticatedRequest } from '../middleware/requireAuth';
-import { RowDataPacket, ResultSetHeader } from 'mysql2';
 
 const router = Router();
 
-const lockSchema = z.object({
-  url: z.string().min(1, "URL is required"),
-  name: z.string().optional()
-});
-
-interface TabLockRow extends RowDataPacket {
-  id: number;
-  user_id: number;
-  url: string;
-  lock_name: string;
-  is_locked: number;
-  created_at: string;
+interface EmailRequestBody {
+  email?: string;
+  site?: string;
+  state?: number;
 }
 
-// GET /api/locks - List all locked sites
-router.get('/', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+interface EmailRequest extends Request {
+  body: EmailRequestBody;
+  userId?: number;
+  userEmail?: string;
+}
+
+interface LockedSiteRow extends RowDataPacket {
+  site: string;
+}
+
+async function getUserFromEmail(req: EmailRequest, res: Response, next: NextFunction) {
   try {
-    const [rows] = await pool.query<TabLockRow[]>(
-      'SELECT id, url, lock_name, is_locked, created_at FROM tab_locks WHERE user_id = ? ORDER BY created_at DESC', 
+    const email = req.body.email?.toLowerCase();
+    if (!email) {
+      return res.status(400).json({ error: 'Email is required' });
+    }
+
+    const [rows] = await pool.query<RowDataPacket[]>(
+      'SELECT id, email FROM users WHERE email = ?',
+      [email]
+    );
+
+    const user = rows[0];
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    req.userId = Number(user.id);
+    req.userEmail = String(user.email);
+    next();
+  } catch (error) {
+    console.error('getUserFromEmail error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+router.post('/list', getUserFromEmail, async (req: EmailRequest, res: Response) => {
+  try {
+    const [rows] = await pool.query<LockedSiteRow[]>(
+      'SELECT site FROM locked_sites WHERE user_id = ? ORDER BY created_at DESC',
       [req.userId]
     );
-    
-    // Convert MySQL 1/0 to boolean
-    const locks = rows.map(row => ({
-      ...row,
-      is_locked: Boolean(row.is_locked)
-    }));
-
-    res.json({ locks });
+    res.json({ sites: rows.map((row) => ({ site: row.site })) });
   } catch (error) {
-    console.error('List locks error:', error);
-    res.status(500).json({ error: 'Failed to fetch locked sites' });
+    console.error('Get sites error:', error);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-// POST /api/locks - Add a new lock
-router.post('/', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
-  const parsed = lockSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: parsed.error.issues[0].message });
-  }
-
-  let { url, name } = parsed.data;
-  // Normalize URL: remove http://, www., and paths
-  url = url.replace(/^(https?:\/\/)?(www\.)?/, '').split('/')[0].toLowerCase();
-
+router.post('/state', getUserFromEmail, async (req: EmailRequest, res: Response) => {
   try {
-    const [result] = await pool.execute<ResultSetHeader>(
-      'INSERT INTO tab_locks (user_id, url, lock_name, is_locked) VALUES (?, ?, ?, true)',
-      [req.userId, url, name || url]
+    const site = req.body.site;
+    if (!site) {
+      return res.status(400).json({ error: 'Site is required' });
+    }
+
+    const [rows] = await pool.query<RowDataPacket[]>(
+      'SELECT site FROM locked_sites WHERE user_id = ? AND site = ?',
+      [req.userId, site]
     );
-    
-    res.status(201).json({ 
-      success: true, 
-      lock: {
-        id: result.insertId,
-        url,
-        lock_name: name || url,
-        is_locked: true,
-        created_at: new Date().toISOString()
-      }
+
+    if (!rows.length) {
+      return res.json({ isLocked: false, state: null });
+    }
+
+    res.json({ isLocked: true, siteData: { site: rows[0].site } });
+  } catch (error) {
+    console.error('Get site state error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.post('/add', getUserFromEmail, async (req: EmailRequest, res: Response) => {
+  try {
+    const site = req.body.site;
+    if (!site) {
+      return res.status(400).json({ error: 'Site is required' });
+    }
+
+    const [existing] = await pool.query<RowDataPacket[]>(
+      'SELECT site FROM locked_sites WHERE user_id = ? AND site = ?',
+      [req.userId, site]
+    );
+
+    if (existing.length) {
+      return res.status(409).json({ error: 'Site already locked' });
+    }
+
+    await pool.query<ResultSetHeader>(
+      'INSERT INTO locked_sites (user_id, site) VALUES (?, ?) ON DUPLICATE KEY UPDATE site = site',
+      [req.userId, site]
+    );
+
+    res.status(201).json({
+      message: 'Site locked successfully',
+      site: { site }
     });
-  } catch (error: any) {
-    if (error.code === 'ER_DUP_ENTRY') {
-      return res.status(409).json({ error: 'This site is already locked' });
-    }
-    console.error('Add lock error:', error);
-    res.status(500).json({ error: 'Failed to lock site' });
+  } catch (error) {
+    console.error('Add site error:', error);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-// DELETE /api/locks/:id - Remove a lock
-router.delete('/:id', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+router.post('/update-state', getUserFromEmail, async (req: EmailRequest, res: Response) => {
   try {
-    const [result] = await pool.execute<ResultSetHeader>(
-      'DELETE FROM tab_locks WHERE id = ? AND user_id = ?', 
-      [req.params.id, req.userId]
-    );
-
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ error: 'Lock not found' });
+    const { site, state } = req.body;
+    if (!site || state === undefined) {
+      return res.status(400).json({ error: 'Site and state are required' });
     }
 
-    res.json({ success: true });
+    const [rows] = await pool.query<RowDataPacket[]>(
+      'SELECT site FROM locked_sites WHERE user_id = ? AND site = ?',
+      [req.userId, site]
+    );
+
+    if (!rows.length) {
+      return res.status(404).json({ error: 'Site not found' });
+    }
+
+    res.json({
+      message: 'Site state should be updated in cache',
+      site: { site: rows[0].site }
+    });
   } catch (error) {
-    console.error('Delete lock error:', error);
-    res.status(500).json({ error: 'Failed to remove lock' });
+    console.error('Update state error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.post('/remove', getUserFromEmail, async (req: EmailRequest, res: Response) => {
+  try {
+    const site = req.body.site;
+    if (!site) {
+      return res.status(400).json({ error: 'Site is required' });
+    }
+
+    const [rows] = await pool.query<RowDataPacket[]>(
+      'SELECT site FROM locked_sites WHERE user_id = ? AND site = ?',
+      [req.userId, site]
+    );
+
+    if (!rows.length) {
+      return res.status(404).json({ error: 'Site not found' });
+    }
+
+    await pool.query<ResultSetHeader>(
+      'DELETE FROM locked_sites WHERE user_id = ? AND site = ?',
+      [req.userId, site]
+    );
+
+    res.json({ message: 'Site removed successfully' });
+  } catch (error) {
+    console.error('Remove site error:', error);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 

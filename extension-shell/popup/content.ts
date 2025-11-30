@@ -58,7 +58,7 @@ async function readAuthFromChromeStorage(): Promise<AuthSnapshot | null> {
 }
 
 // Inline API helper for AI analysis
-const GEMINI_API_KEY = 'AIzaSyD8w_KtZvvLN1MIiFjyWAXE2u4X5W1hnjE';
+const GEMINI_API_KEY = 'AIzaSyDAsTZ-iWYH9TQ26OVfHTNhxIaeF85i04c';
 
 async function analyzeWebsiteWithAI(url: string): Promise<{ description: string; pros: string[]; cons: string[] }> {
 	const payload = {

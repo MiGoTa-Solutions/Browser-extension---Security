@@ -5,8 +5,10 @@ interface TabLock {
   is_locked: boolean;
 }
 
+// Using 127.0.0.1 to avoid localhost resolution issues in extensions
 const API_BASE_URL = 'http://127.0.0.1:4000/api';
 
+// --- HELPER: Normalize Domain ---
 function normalizeDomain(value?: string | null): string | null {
   if (!value) return null;
   try {
@@ -34,44 +36,45 @@ async function syncLocks() {
         lockedSites: result.locks, 
         lastSync: Date.now() 
       });
+      console.log('[Background] Locks synced:', result.locks.length);
     }
   } catch (error) {
     console.error('[Background] Sync failed:', error);
   }
 }
 
-// --- 2. FREQUENCY TRACKER (FROM FRIEND'S REPO) ---
-async function updateVisitCount(urlStr: string) {
+// --- 2. FREQUENCY TRACKER HELPER ---
+async function trackVisitFrequency(urlStr: string) {
   try {
     const url = new URL(urlStr);
     const hostname = url.hostname;
     
-    // Ignore internal pages
-    if (!hostname || hostname.startsWith('chrome') || hostname === 'newtab') return;
+    // Ignore internal pages and new tabs
+    if (!hostname || hostname.startsWith('chrome') || hostname === 'newtab' || hostname === 'extensions') return;
 
     const result = await chrome.storage.local.get(['websiteFrequency']);
-    const frequencyData = (result.websiteFrequency ?? {}) as Record<string, number>;
+    const frequencyData = (result.websiteFrequency || {}) as Record<string, number>;
 
+    // Increment count
     frequencyData[hostname] = (frequencyData[hostname] || 0) + 1;
 
     await chrome.storage.local.set({ websiteFrequency: frequencyData });
-    // console.log(`[Frequency] ${hostname}: ${frequencyData[hostname]}`);
   } catch (e) {
     // Ignore invalid URLs
   }
 }
 
-// --- 3. NAVIGATION LISTENER (THE BLOCKER & TRACKER) ---
+// --- 3. MAIN NAVIGATION LISTENER (BLOCKER) ---
 chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
-  if (details.frameId !== 0) return;
+  if (details.frameId !== 0) return; // Only check main frame
 
   const currentUrl = details.url;
-  if (currentUrl.startsWith(chrome.runtime.getURL(''))) return;
+  if (currentUrl.startsWith(chrome.runtime.getURL(''))) return; // Ignore internal pages
 
-  // Track Frequency
-  updateVisitCount(currentUrl);
+  // A. Track Frequency for AI Suggestions
+  trackVisitFrequency(currentUrl);
 
-  // Check Lock
+  // B. Check Locks
   const { lockedSites } = await chrome.storage.local.get('lockedSites');
   if (!Array.isArray(lockedSites) || lockedSites.length === 0) return;
 
@@ -79,25 +82,29 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
     const targetUrl = new URL(currentUrl);
     const hostname = targetUrl.hostname.toLowerCase();
 
+    // Find if the current site matches any locked site
     const matchedLock = lockedSites.find((lock: TabLock) => {
       if (!lock?.is_locked) return false;
-      const normalized = normalizeDomain(lock?.url);
-      if (!normalized) return false;
-      return hostname.includes(normalized);
+      const normalizedLockUrl = normalizeDomain(lock.url);
+      if (!normalizedLockUrl) return false;
+      return hostname.includes(normalizedLockUrl);
     });
 
     if (matchedLock) {
+      console.log(`[Background] Blocking ${hostname}`);
       const lockPageUrl = chrome.runtime.getURL('lock.html') + 
         `?url=${encodeURIComponent(currentUrl)}&id=${matchedLock.id}`;
+      
       chrome.tabs.update(details.tabId, { url: lockPageUrl });
     }
   } catch (e) {
-    // Ignore
+    // Ignore URL parsing errors
   }
 });
 
-// --- 4. EVENTS & ALARMS ---
+// --- 4. ALARMS & EVENTS ---
 chrome.runtime.onInstalled.addListener(() => {
+  console.log('[Background] Installed.');
   syncLocks();
   chrome.alarms.create('syncLocks', { periodInMinutes: 5 });
 });
@@ -109,9 +116,11 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.type === 'SYNC_LOCKS') {
     syncLocks().then(() => sendResponse({ success: true }));
-    return true; 
+    return true; // Keep channel open
   }
+  
   if (msg.type === 'UNLOCK_SITE') {
+    // Logic to temporarily allow the site could go here
     sendResponse({ success: true });
   }
-}); 
+});

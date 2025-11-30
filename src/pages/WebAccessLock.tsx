@@ -7,7 +7,7 @@ import { Button } from '../components/Button';
 import { Input } from '../components/Input';
 import { notifyExtensionSync } from '../utils/extensionApi';
 
-const GEMINI_API_KEY = 'AIzaSyD8w_KtZvvLN1MIiFjyWAXE2u4X5W1hnjE';
+const GEMINI_API_KEY = 'AIzaSyCrBuewLwgc1GhrkZnunYplTnerHfo5rDg';
 const GEMINI_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
 
 type WebsiteFrequency = Record<string, number>;
