@@ -3,6 +3,7 @@ import express from 'express';
 import helmet from 'helmet';
 import authRoutes from './routes/auth';
 import webAccessLockRoutes from './routes/webAccessLock';
+import geminiRoutes from './routes/gemini';
 
 const app = express();
 
@@ -29,6 +30,7 @@ app.get('/health', (_req, res) => {
 
 app.use('/api/auth', authRoutes);
 app.use('/api/locks', webAccessLockRoutes);
+app.use('/api/gemini', geminiRoutes);
 
 // Error handler
 app.use((err: Error & { statusCode?: number }, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
