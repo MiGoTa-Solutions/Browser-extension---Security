@@ -13,15 +13,21 @@ if (!GEMINI_API_KEY) {
 // Proxy endpoint for Gemini API requests
 router.post('/analyze', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
   try {
+    console.log('[Gemini] Received request body:', req.body);
+    
     if (!GEMINI_API_KEY) {
+      console.error('[Gemini] API key not configured');
       return res.status(503).json({ error: 'Gemini API key not configured' });
     }
 
     const { prompt } = req.body;
 
     if (!prompt || typeof prompt !== 'string') {
-      return res.status(400).json({ error: 'Invalid prompt' });
+      console.error('[Gemini] Invalid prompt received:', { prompt, type: typeof prompt });
+      return res.status(400).json({ error: 'Invalid prompt - must be a non-empty string' });
     }
+    
+    console.log('[Gemini] Processing prompt:', prompt.substring(0, 100) + '...');
 
     // Call Gemini API from server-side
     const response = await fetch(`${GEMINI_API_URL}?key=${GEMINI_API_KEY}`, {
