@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Lock, Trash2, Plus, Globe, Sparkles } from 'lucide-react';
+import { Lock, Trash2, Plus, Globe, Sparkles, RefreshCw } from 'lucide-react'; // Added RefreshCw
 import { useAuth } from '../context/AuthContext';
 import { webAccessLockApi } from '../services/api';
 import { TabLock } from '../types';
@@ -7,12 +7,13 @@ import { Button } from '../components/Button';
 import { Input } from '../components/Input';
 import { notifyExtensionSync } from '../utils/extensionApi';
 
-const GEMINI_API_KEY = 'AIzaSyCxFvQnPLhcTDRnVmKBOdQ20jOKY2Z1hA4'; // Unified Key
+const GEMINI_API_KEY = 'AIzaSyDvHWTKIxHxGo1IWwEPZNqzvnBYuzUFVDc'; 
 
 export function WebAccessLock() {
   const { token } = useAuth();
   const [locks, setLocks] = useState<TabLock[]>([]);
   const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false); // New state for manual sync
   const [newUrl, setNewUrl] = useState('');
   const [newName, setNewName] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -40,6 +41,20 @@ export function WebAccessLock() {
     }
   };
 
+  // FIX: Manual Sync Function
+  const handleManualSync = async () => {
+    if (!token) return;
+    setSyncing(true);
+    try {
+      // 1. Fetch latest data
+      await fetchLocks();
+      // 2. Force extension to update immediately
+      await notifyExtensionSync();
+    } finally {
+      setTimeout(() => setSyncing(false), 500); // Visual delay
+    }
+  };
+
   const handleAddLock = async (url: string, name?: string) => {
     if (!token) return;
     setSubmitting(true);
@@ -49,7 +64,7 @@ export function WebAccessLock() {
       setNewName('');
       setSuggestions(prev => prev.filter(s => s !== url));
       await fetchLocks();
-      notifyExtensionSync();
+      notifyExtensionSync(); // Triggers immediate sync in background
     } catch (err) {
       alert('Failed to add lock.');
     } finally {
@@ -100,7 +115,6 @@ export function WebAccessLock() {
       const text = data.candidates[0].content.parts[0].text.replace(/```json|```/g, '').trim();
       const sites = JSON.parse(text);
       
-      // Filter out already locked sites
       const available = sites.filter((s: string) => !locks.some(l => l.url.includes(s)));
       setSuggestions(available);
       if (available.length === 0) setSuggestionError('You have locked all suggested sites.');
@@ -115,14 +129,25 @@ export function WebAccessLock() {
 
   return (
     <div className="max-w-4xl mx-auto space-y-8 p-6">
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-          <Lock className="w-8 h-8 text-blue-600" />
-          Web Access Lock
-        </h1>
-        <p className="text-gray-500 mt-2">
-          Block distracting or sensitive websites. Requires Master PIN to access.
-        </p>
+      <div className="flex justify-between items-start">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+            <Lock className="w-8 h-8 text-blue-600" />
+            Web Access Lock
+          </h1>
+          <p className="text-gray-500 mt-2">
+            Block distracting or sensitive websites. Requires Master PIN to access.
+          </p>
+        </div>
+        {/* FIX: Added Sync Button */}
+        <button 
+          onClick={handleManualSync} 
+          disabled={syncing}
+          className={`p-2 rounded-lg text-gray-500 hover:bg-gray-100 transition-all ${syncing ? 'animate-spin text-blue-600' : ''}`}
+          title="Sync with Extension"
+        >
+          <RefreshCw className="w-5 h-5" />
+        </button>
       </div>
 
       <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">

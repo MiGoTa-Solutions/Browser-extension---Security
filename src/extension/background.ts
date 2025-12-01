@@ -7,7 +7,6 @@ interface TabLock {
 
 // Interface for our Local Storage Whitelist
 interface LocalData {
-  // Stores domains that are locked on server but unlocked by user PIN
   unlockedExceptions?: string[]; 
   lockedSites?: TabLock[];
   auth_token?: string;
@@ -33,14 +32,22 @@ async function syncLocks() {
     const data = await chrome.storage.local.get('auth_token');
     const token = data.auth_token;
     
-    // DEBUG: Check for Auth Token
     if (!token) {
+        // Warn user via Badge if they aren't logged in
+        updateBadge('?', '#9ca3af'); 
         return;
     }
 
     const response = await fetch(`${API_BASE_URL}/locks`, {
       headers: { 'Authorization': `Bearer ${token}` }
     });
+
+    if (response.status === 401) {
+        // AUTH ERROR: Alert the user silently via Badge
+        console.warn('[Background] Auth Token Expired');
+        updateBadge('!', '#ef4444'); // Red '!'
+        return;
+    }
 
     if (response.ok) {
       const result = await response.json();
@@ -49,11 +56,22 @@ async function syncLocks() {
         lastSync: Date.now() 
       });
       
+      // Success: Clear badge
+      updateBadge('', '');
       console.log(`[Background] Locks synced: ${result.locks.length}`);
     }
   } catch (error) {
-    // Silent fail for connection errors to avoid console spam
+    // Network error? Show yellow warning
+    updateBadge('ERR', '#f59e0b');
   }
+}
+
+// Helper to manage the extension icon badge
+function updateBadge(text: string, color: string) {
+    chrome.action.setBadgeText({ text });
+    if (color) {
+        chrome.action.setBadgeBackgroundColor({ color });
+    }
 }
 
 // --- 2. FREQUENCY TRACKER HELPER ---
@@ -96,8 +114,7 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
     const hostname = targetUrl.hostname.toLowerCase();
 
     // 1. CHECK EXCEPTIONS (User manually unlocked this via PIN)
-    // This allows the site to remain open until manually re-locked
-    // FIX: Use strict domain matching (exact or subdomain)
+    // FIX: Strict domain matching
     if (unlockedExceptions.some((u) => hostname === u || hostname.endsWith('.' + u))) {
       console.log(`[Background] Allowing exception: ${hostname}`);
       return; 
@@ -109,7 +126,7 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
       const normalizedLockUrl = normalizeDomain(lock.url);
       if (!normalizedLockUrl) return false;
       
-      // FIX: Use strict domain matching (exact or subdomain) instead of .includes()
+      // FIX: Strict domain matching instead of .includes()
       return hostname === normalizedLockUrl || hostname.endsWith('.' + normalizedLockUrl);
     });
 
@@ -130,20 +147,20 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
 chrome.runtime.onInstalled.addListener(() => {
   console.log('[Background] Installed.');
   syncLocks();
-  // We use setInterval for high-frequency polling (5s) as requested
   setInterval(syncLocks, 5000);
 });
 
-// Also start interval on load (service worker wakeup)
+// Start interval on load
 setInterval(syncLocks, 5000);
 
+// HANDLE MESSAGES FROM EXTENSION (Popup/Content)
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.type === 'SYNC_LOCKS') {
     syncLocks().then(() => sendResponse({ success: true }));
     return true; 
   }
   
-  // HANDLE UNLOCK (Add to Exception List)
+  // HANDLE UNLOCK
   if (msg.type === 'UNLOCK_SITE') {
     const urlToUnlock = msg.url;
     const hostname = normalizeDomain(urlToUnlock);
@@ -154,23 +171,21 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
             const list: string[] = (data as LocalData).unlockedExceptions || [];
             if (!list.includes(hostname)) {
                 list.push(hostname);
-                // FIX: await the set operation before sending response
                 await chrome.storage.local.set({ unlockedExceptions: list });
             }
             sendResponse({ success: true });
         });
-        return true; // Keep channel open for async response
+        return true; 
     }
   }
 
-  // HANDLE RE-LOCK (Remove from Exception List)
+  // HANDLE RE-LOCK
   if (msg.type === 'RELOCK_SITE') {
-    const hostname = normalizeDomain(msg.url); // We expect hostname or full url
+    const hostname = normalizeDomain(msg.url);
     if (hostname) {
       console.log(`[Background] Re-locking: ${hostname}`);
       chrome.storage.local.get('unlockedExceptions').then(async (data) => {
         let list: string[] = (data as LocalData).unlockedExceptions || [];
-        // Remove the hostname from the list securely
         list = list.filter(domain => domain !== hostname);
         await chrome.storage.local.set({ unlockedExceptions: list });
         sendResponse({ success: true });
@@ -178,4 +193,14 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       return true;
     }
   }
+});
+
+// FIX: HANDLE MESSAGES FROM WEB APP (For Immediate Sync)
+// This requires "externally_connectable" in manifest.json pointing to localhost/production
+chrome.runtime.onMessageExternal.addListener((msg, _sender, sendResponse) => {
+    if (msg.type === 'SYNC_LOCKS') {
+        console.log('[Background] External Sync Request Received');
+        syncLocks().then(() => sendResponse({ success: true }));
+        return true;
+    }
 });
