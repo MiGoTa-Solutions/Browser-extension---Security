@@ -6,7 +6,6 @@ style.textContent = `
   #ss-float-btn { position: fixed; bottom: 24px; right: 24px; width: 56px; height: 56px; border-radius: 50%; background: linear-gradient(135deg, #6c63ff, #5850d6); color: white; border: none; font-size: 24px; cursor: pointer; z-index: 2147483647; box-shadow: 0 4px 16px rgba(108,99,255,0.4); display: flex; align-items: center; justify-content: center; transition: transform 0.2s; }
   #ss-float-btn:hover { transform: scale(1.1); }
   
-  /* Red Button Style for Re-Locking */
   #ss-float-btn.ss-unlocked { background: linear-gradient(135deg, #e74c3c, #c0392b); box-shadow: 0 4px 16px rgba(231,76,60,0.4); }
 
   .ss-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(5,8,22,0.85); backdrop-filter: blur(8px); z-index: 2147483647; display: flex; justify-content: center; align-items: center; }
@@ -19,7 +18,6 @@ style.textContent = `
   .ss-msg-user { background: #6c63ff; color: white; align-self: flex-end; margin-left: auto; }
   .ss-msg-ai { background: #2d3748; color: white; align-self: flex-start; margin-right: auto; }
 
-  /* TOAST NOTIFICATIONS */
   .ss-toast {
     position: fixed; top: 24px; left: 50%; transform: translateX(-50%) translateY(-100px);
     background: #1f2937; color: white; padding: 12px 24px; border-radius: 8px;
@@ -33,7 +31,6 @@ style.textContent = `
 `;
 document.head.appendChild(style);
 
-// --- HELPER TYPES ---
 interface SiteAnalysis {
   description: string;
   pros: string[];
@@ -49,10 +46,8 @@ interface StorageData {
   auth_token?: string;
 }
 
-// --- STATE TRACKING ---
 let isRelockMode = false;
 
-// --- UI HELPERS ---
 function showToast(message: string, type: 'success' | 'error' | 'info' = 'info') {
   const toast = document.createElement('div');
   toast.className = `ss-toast ${type}`;
@@ -66,7 +61,6 @@ function showToast(message: string, type: 'success' | 'error' | 'info' = 'info')
   }, 3000);
 }
 
-// --- MAIN LOGIC ---
 async function init() {
   const data = await chrome.storage.local.get(['lockedSites', 'unlockedExceptions']) as StorageData;
   const lockedSites = data.lockedSites || [];
@@ -84,12 +78,12 @@ async function init() {
 
   if (isServerLocked && isLocallyUnlocked) {
     isRelockMode = true;
-    btn.innerHTML = '🔒'; // FIX: Proper Lock Emoji
+    btn.innerHTML = '🔒';
     btn.classList.add('ss-unlocked');
     btn.title = "Site is temporarily unlocked. Click to Re-Lock.";
   } else {
     isRelockMode = false;
-    btn.innerHTML = '🛡️'; // FIX: Proper Shield Emoji (was corrupted)
+    btn.innerHTML = '🛡️';
     btn.title = "SecureShield AI Analysis";
   }
 
@@ -106,7 +100,6 @@ async function handleLockClick() {
 
   const btn = document.getElementById('ss-float-btn');
 
-  // RE-LOCK LOGIC
   if (isRelockMode) {
     if (confirm('Re-lock this website?')) {
         if(btn) btn.innerHTML = '...';
@@ -117,19 +110,19 @@ async function handleLockClick() {
     return;
   }
 
-  // ANALYSIS LOGIC
-  if (btn) btn.innerHTML = '⏳'; // FIX: Proper Hourglass Emoji (was corrupted)
+  if (btn) btn.innerHTML = '⏳';
   
   try {
     const prompt = `Analyze ${window.location.href}. Return valid JSON only: {"description": "string", "pros": ["string"], "cons": ["string"]}`;
     
+    // FIX: Using Backend URL with simple body format
     const res = await fetch(`${API_BASE_URL}/gemini/analyze`, {
       method: 'POST',
       headers: { 
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${auth_token}`
       },
-      body: JSON.stringify({ prompt })
+      body: JSON.stringify({ prompt }) // <--- CORRECT: Sending just { prompt: ... }
     });
     
     if (!res.ok) {
@@ -152,7 +145,7 @@ async function handleLockClick() {
     console.error('SecureShield AI Error:', e);
     showToast(e.message, 'error');
   } finally {
-    if (btn) btn.innerHTML = '🛡️'; // FIX: Restore Shield Emoji
+    if (btn) btn.innerHTML = '🛡️';
   }
 }
 
@@ -169,7 +162,8 @@ function showPopup(data: SiteAnalysis, token: string) {
       <ul>${data.cons.map(c => `<li>${c}</li>`).join('')}</ul>
       <div style="text-align:center; margin-top:20px">
         <button class="ss-btn ss-btn-danger" id="ss-close">Close</button>
-        <button class="ss-btn ss-btn-secondary" id="ss-chat">💬 Chat with AI</button> <button class="ss-btn ss-btn-primary" id="ss-confirm">Lock Site</button>
+        <button class="ss-btn ss-btn-secondary" id="ss-chat">💬 Chat with AI</button>
+        <button class="ss-btn ss-btn-primary" id="ss-confirm">Lock Site</button>
       </div>
     </div>
   `;
@@ -246,25 +240,23 @@ function showChatOverlay(context: string) {
     try {
       const data = await chrome.storage.local.get('auth_token') as StorageData;
       const token = data.auth_token;
-      
-      if (!token) {
-        throw new Error('Not authenticated');
-      }
 
+      // FIX: Using Backend URL with simple body format
       const res = await fetch(`${API_BASE_URL}/gemini/analyze`, {
         method: 'POST',
         headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify({ prompt: `Context: ${context}. User Question: ${msg}` })
+        body: JSON.stringify({ prompt: `Context: ${context}. User Question: ${msg}` }) // <--- CORRECT
       });
-      const responseData = await res.json();
-      if (!res.ok || !responseData.candidates) throw new Error('AI Error');
+      
+      const dataRes = await res.json();
+      if (!res.ok || !dataRes.candidates) throw new Error('AI Error');
       
       const aiDiv = document.createElement('div');
       aiDiv.className = 'ss-chat-msg ss-msg-ai';
-      aiDiv.textContent = responseData.candidates[0].content.parts[0].text;
+      aiDiv.textContent = dataRes.candidates[0].content.parts[0].text;
       box.appendChild(aiDiv);
     } catch (e) {
       const errDiv = document.createElement('div');
