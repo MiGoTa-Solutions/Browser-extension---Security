@@ -1,5 +1,5 @@
 const API_BASE_URL = 'http://127.0.0.1:4000/api';
-const GEMINI_API_KEY = 'AIzaSyAt5C9kLi8W4khsQrmKTtfWtn6N_W0WP9k'; 
+const GEMINI_API_KEY = 'AIzaSyCxFvQnPLhcTDRnVmKBOdQ20jOKY2Z1hA4'; 
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
 
 // --- INJECT STYLES ---
@@ -86,12 +86,12 @@ async function init() {
 
   if (isServerLocked && isLocallyUnlocked) {
     isRelockMode = true;
-    btn.innerHTML = '🔒';
+    btn.innerHTML = '🔒'; // Emoji: Lock
     btn.classList.add('ss-unlocked');
     btn.title = "Site is temporarily unlocked. Click to Re-Lock.";
   } else {
     isRelockMode = false;
-    btn.innerHTML = '白';
+    btn.innerHTML = '🛡️'; // Emoji: Shield
     btn.title = "SecureShield AI Analysis";
   }
 
@@ -120,7 +120,7 @@ async function handleLockClick() {
   }
 
   // ANALYSIS LOGIC
-  if (btn) btn.innerHTML = '竢ｳ';
+  if (btn) btn.innerHTML = '⏳'; // Emoji: Hourglass
   
   try {
     const prompt = `Analyze ${window.location.href}. Return valid JSON only: {"description": "string", "pros": ["string"], "cons": ["string"]}`;
@@ -151,7 +151,7 @@ async function handleLockClick() {
     console.error('SecureShield AI Error:', e);
     showToast(e.message, 'error');
   } finally {
-    if (btn) btn.innerHTML = '白';
+    if (btn) btn.innerHTML = '🛡️'; // Emoji: Shield
   }
 }
 
@@ -168,7 +168,7 @@ function showPopup(data: SiteAnalysis, token: string) {
       <ul>${data.cons.map(c => `<li>${c}</li>`).join('')}</ul>
       <div style="text-align:center; margin-top:20px">
         <button class="ss-btn ss-btn-danger" id="ss-close">Close</button>
-        <button class="ss-btn ss-btn-secondary" id="ss-chat">町 Chat with AI</button>
+        <button class="ss-btn ss-btn-secondary" id="ss-chat">💬 Chat with AI</button>
         <button class="ss-btn ss-btn-primary" id="ss-confirm">Lock Site</button>
       </div>
     </div>
