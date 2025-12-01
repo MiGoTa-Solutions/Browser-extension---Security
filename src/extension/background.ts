@@ -168,12 +168,18 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (hostname) {
         console.log(`[Background] Adding Exception: ${hostname}`);
         chrome.storage.local.get('unlockedExceptions').then(async (data) => {
-            const list: string[] = (data as LocalData).unlockedExceptions || [];
-            if (!list.includes(hostname)) {
-                list.push(hostname);
-                await chrome.storage.local.set({ unlockedExceptions: list });
+            try {
+                const list: string[] = (data as LocalData).unlockedExceptions || [];
+                if (!list.includes(hostname)) {
+                    list.push(hostname);
+                    // FIX: await the set operation
+                    await chrome.storage.local.set({ unlockedExceptions: list });
+                }
+                sendResponse({ success: true });
+            } catch (err) {
+                console.error('[Background] Storage Write Error:', err);
+                sendResponse({ success: false, error: 'Storage write failed' });
             }
-            sendResponse({ success: true });
         });
         return true; 
     }
@@ -185,18 +191,22 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (hostname) {
       console.log(`[Background] Re-locking: ${hostname}`);
       chrome.storage.local.get('unlockedExceptions').then(async (data) => {
-        let list: string[] = (data as LocalData).unlockedExceptions || [];
-        list = list.filter(domain => domain !== hostname);
-        await chrome.storage.local.set({ unlockedExceptions: list });
-        sendResponse({ success: true });
+        try {
+            let list: string[] = (data as LocalData).unlockedExceptions || [];
+            list = list.filter(domain => domain !== hostname);
+            await chrome.storage.local.set({ unlockedExceptions: list });
+            sendResponse({ success: true });
+        } catch (err) {
+            console.error('[Background] Storage Write Error:', err);
+            sendResponse({ success: false });
+        }
       });
       return true;
     }
   }
 });
 
-// FIX: HANDLE MESSAGES FROM WEB APP (For Immediate Sync)
-// This requires "externally_connectable" in manifest.json pointing to localhost/production
+// HANDLE MESSAGES FROM WEB APP (For Immediate Sync)
 chrome.runtime.onMessageExternal.addListener((msg, _sender, sendResponse) => {
     if (msg.type === 'SYNC_LOCKS') {
         console.log('[Background] External Sync Request Received');

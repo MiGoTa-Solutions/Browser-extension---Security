@@ -37,6 +37,15 @@ document.addEventListener('DOMContentLoaded', () => {
         }, 3000);
     }
 
+    // Helper to safely redirect/close
+    const finishUnlock = () => {
+        if (targetUrl) {
+            window.location.href = targetUrl;
+        } else {
+            window.close();
+        }
+    };
+
     form.addEventListener('submit', async (e) => {
         e.preventDefault();
         const pin = input.value;
@@ -64,17 +73,39 @@ document.addEventListener('DOMContentLoaded', () => {
             if (response.ok) {
                 showNotification('Unlocked! Redirecting...', false);
                 
-                // FIX: Wait for background to acknowledge update
-                chrome.runtime.sendMessage({ type: 'UNLOCK_SITE', url: targetUrl }, (resp) => {
-                    setTimeout(() => {
-                        if (targetUrl) {
-                            window.location.href = targetUrl;
-                        } else {
-                            window.close();
-                        }
-                    }, 500); // Slight delay for UI transition
+                // FIX: Robust Message Handling with Timeout Race
+                const unlockMessagePromise = new Promise((resolve) => {
+                    try {
+                        chrome.runtime.sendMessage({ type: 'UNLOCK_SITE', url: targetUrl }, (resp) => {
+                            // Check if background script didn't respond or crashed
+                            if (chrome.runtime.lastError) {
+                                console.warn("Background script unreachable:", chrome.runtime.lastError);
+                                resolve(false); 
+                            } else {
+                                resolve(resp?.success);
+                            }
+                        });
+                    } catch (e) {
+                        resolve(false);
+                    }
                 });
+
+                // Create a 2-second timeout promise
+                const timeoutPromise = new Promise((resolve) => {
+                    setTimeout(() => {
+                        console.warn("Unlock response timed out.");
+                        resolve(false);
+                    }, 2000);
+                });
+
+                // Wait for whichever comes first: Background Success OR Timeout
+                await Promise.race([unlockMessagePromise, timeoutPromise]);
+                
+                // Force reload regardless of success/fail to prevent hanging
+                finishUnlock();
+
             } else {
+                // Wrong PIN
                 errorMsg.style.display = 'block';
                 input.value = '';
                 btn.textContent = 'Unlock Access';
