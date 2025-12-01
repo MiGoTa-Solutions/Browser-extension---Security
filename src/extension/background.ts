@@ -97,7 +97,8 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
 
     // 1. CHECK EXCEPTIONS (User manually unlocked this via PIN)
     // This allows the site to remain open until manually re-locked
-    if (unlockedExceptions.some((u) => hostname.includes(u))) {
+    // FIX: Use strict domain matching (exact or subdomain)
+    if (unlockedExceptions.some((u) => hostname === u || hostname.endsWith('.' + u))) {
       console.log(`[Background] Allowing exception: ${hostname}`);
       return; 
     }
@@ -107,7 +108,9 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
       if (!lock?.is_locked) return false;
       const normalizedLockUrl = normalizeDomain(lock.url);
       if (!normalizedLockUrl) return false;
-      return hostname.includes(normalizedLockUrl);
+      
+      // FIX: Use strict domain matching (exact or subdomain) instead of .includes()
+      return hostname === normalizedLockUrl || hostname.endsWith('.' + normalizedLockUrl);
     });
 
     if (matchedLock) {
@@ -167,7 +170,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       console.log(`[Background] Re-locking: ${hostname}`);
       chrome.storage.local.get('unlockedExceptions').then(async (data) => {
         let list: string[] = (data as LocalData).unlockedExceptions || [];
-        list = list.filter(domain => !hostname.includes(domain) && !domain.includes(hostname));
+        // Remove the hostname from the list securely
+        list = list.filter(domain => domain !== hostname);
         await chrome.storage.local.set({ unlockedExceptions: list });
         sendResponse({ success: true });
       });
