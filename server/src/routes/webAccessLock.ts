@@ -49,10 +49,44 @@ router.post('/', requireAuth, async (req: AuthenticatedRequest, res: Response) =
   }
 
   let { url, name } = parsed.data;
-  // Normalize URL: remove http://, www., and paths
+  // Normalize URL: remove http://, www., and paths to match extension logic
   url = url.replace(/^(https?:\/\/)?(www\.)?/, '').split('/')[0].toLowerCase();
 
   try {
+    // [FIX] Check for existing lock to prevent duplicates
+    const [existing] = await pool.query<TabLockRow[]>(
+      'SELECT id, is_locked FROM tab_locks WHERE user_id = ? AND url = ?',
+      [req.userId, url]
+    );
+
+    if (existing.length > 0) {
+      const lock = existing[0];
+      
+      if (lock.is_locked) {
+        // Truly duplicate: Already exists and is locked
+        return res.status(409).json({ error: 'This site is already locked.' });
+      } else {
+        // Exists but unlocked: Re-lock it
+        await pool.execute(
+          'UPDATE tab_locks SET is_locked = true, created_at = NOW() WHERE id = ?',
+          [lock.id]
+        );
+        
+        return res.status(200).json({ 
+          success: true, 
+          message: 'Site re-locked successfully',
+          lock: { 
+            id: lock.id, 
+            url, 
+            lock_name: name || url, 
+            is_locked: true, 
+            created_at: new Date().toISOString() 
+          } 
+        });
+      }
+    }
+
+    // If no existing row, Insert new lock
     const [result] = await pool.execute<ResultSetHeader>(
       'INSERT INTO tab_locks (user_id, url, lock_name, is_locked) VALUES (?, ?, ?, true)',
       [req.userId, url, name || url]
@@ -68,7 +102,9 @@ router.post('/', requireAuth, async (req: AuthenticatedRequest, res: Response) =
         created_at: new Date().toISOString()
       }
     });
+
   } catch (error: any) {
+    // Fallback for race conditions caught by DB constraint
     if (error.code === 'ER_DUP_ENTRY') {
       return res.status(409).json({ error: 'This site is already locked' });
     }
