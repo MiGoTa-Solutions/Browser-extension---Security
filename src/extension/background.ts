@@ -1,7 +1,7 @@
 // Define types locally for the service worker
 interface TabLock {
   id: number;
-  url: string;
+  url: string; // This stores the NORMALIZED hostname
   is_locked: boolean;
 }
 
@@ -17,6 +17,7 @@ interface LocalData {
 const API_BASE_URL = 'http://127.0.0.1:4000/api';
 
 // --- HELPER: Normalize Domain ---
+// Converts "https://www.google.com/maps" -> "google.com"
 function normalizeDomain(value?: string | null): string | null {
   if (!value) return null;
   try {
@@ -26,14 +27,13 @@ function normalizeDomain(value?: string | null): string | null {
   }
 }
 
-// --- 1. SYNC LOCKS FROM SERVER (High Frequency & Debug Mode) ---
+// --- 1. SYNC LOCKS FROM SERVER ---
 async function syncLocks() {
   try {
     const data = await chrome.storage.local.get('auth_token');
     const token = data.auth_token;
     
     if (!token) {
-        // Warn user via Badge if they aren't logged in
         updateBadge('?', '#9ca3af'); 
         return;
     }
@@ -43,25 +43,30 @@ async function syncLocks() {
     });
 
     if (response.status === 401) {
-        // AUTH ERROR: Alert the user silently via Badge
         console.warn('[Background] Auth Token Expired');
-        updateBadge('!', '#ef4444'); // Red '!'
+        updateBadge('!', '#ef4444'); 
         return;
     }
 
     if (response.ok) {
       const result = await response.json();
+      
+      // OPTIMIZATION: Normalize URLs *before* saving to storage
+      // This prevents re-calculating regex/parsing on every single navigation event
+      const normalizedLocks = result.locks.map((lock: any) => ({
+        ...lock,
+        url: normalizeDomain(lock.url) 
+      }));
+
       await chrome.storage.local.set({ 
-        lockedSites: result.locks, 
+        lockedSites: normalizedLocks, 
         lastSync: Date.now() 
       });
       
-      // Success: Clear badge
       updateBadge('', '');
-      console.log(`[Background] Locks synced: ${result.locks.length}`);
+      console.log(`[Background] Locks synced: ${normalizedLocks.length}`);
     }
   } catch (error) {
-    // Network error? Show yellow warning
     updateBadge('ERR', '#f59e0b');
   }
 }
@@ -75,11 +80,9 @@ function updateBadge(text: string, color: string) {
 }
 
 // --- 2. FREQUENCY TRACKER HELPER ---
-async function trackVisitFrequency(urlStr: string) {
+// OPTIMIZATION: Now accepts 'hostname' string to avoid re-parsing
+async function trackVisitFrequency(hostname: string) {
   try {
-    const url = new URL(urlStr);
-    const hostname = url.hostname;
-    
     if (!hostname || hostname.startsWith('chrome') || hostname === 'newtab' || hostname === 'extensions') return;
 
     const result = await chrome.storage.local.get(['websiteFrequency']);
@@ -88,19 +91,28 @@ async function trackVisitFrequency(urlStr: string) {
     frequencyData[hostname] = (frequencyData[hostname] || 0) + 1;
     await chrome.storage.local.set({ websiteFrequency: frequencyData });
   } catch (e) {
-    // Ignore invalid URLs
+    // Ignore storage errors
   }
 }
 
 // --- 3. MAIN NAVIGATION LISTENER (BLOCKER & TRACKER) ---
 chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
-  if (details.frameId !== 0) return; // Only check main frame
+  if (details.frameId !== 0) return; 
 
   const currentUrl = details.url;
-  if (currentUrl.startsWith(chrome.runtime.getURL(''))) return; // Ignore internal pages
+  if (currentUrl.startsWith(chrome.runtime.getURL(''))) return;
 
-  // A. Track Frequency
-  trackVisitFrequency(currentUrl);
+  // OPTIMIZATION: Parse URL exactly once
+  let hostname: string;
+  try {
+     const urlObj = new URL(currentUrl);
+     hostname = urlObj.hostname.toLowerCase();
+  } catch {
+     return; // Invalid URL, ignore
+  }
+
+  // A. Track Frequency (Pass pre-parsed hostname)
+  trackVisitFrequency(hostname);
 
   // B. Check Locks
   const data = await chrome.storage.local.get(['lockedSites', 'unlockedExceptions']) as LocalData;
@@ -110,24 +122,19 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
   if (!Array.isArray(lockedSites) || lockedSites.length === 0) return;
 
   try {
-    const targetUrl = new URL(currentUrl);
-    const hostname = targetUrl.hostname.toLowerCase();
-
-    // 1. CHECK EXCEPTIONS (User manually unlocked this via PIN)
-    // FIX: Strict domain matching
+    // 1. CHECK EXCEPTIONS (Strict Matching)
     if (unlockedExceptions.some((u) => hostname === u || hostname.endsWith('.' + u))) {
       console.log(`[Background] Allowing exception: ${hostname}`);
       return; 
     }
 
-    // 2. CHECK SERVER LOCKS
+    // 2. CHECK SERVER LOCKS (Optimized)
     const matchedLock = lockedSites.find((lock: TabLock) => {
-      if (!lock?.is_locked) return false;
-      const normalizedLockUrl = normalizeDomain(lock.url);
-      if (!normalizedLockUrl) return false;
+      if (!lock?.is_locked || !lock.url) return false;
       
-      // FIX: Strict domain matching instead of .includes()
-      return hostname === normalizedLockUrl || hostname.endsWith('.' + normalizedLockUrl);
+      // lock.url is ALREADY normalized from syncLocks()
+      // We just check strict equality or subdomain
+      return hostname === lock.url || hostname.endsWith('.' + lock.url);
     });
 
     if (matchedLock) {
@@ -137,9 +144,7 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
       
       chrome.tabs.update(details.tabId, { url: lockPageUrl });
     }
-  } catch (e) {
-    // Ignore URL parsing errors
-  }
+  } catch (e) { }
 });
 
 // --- 4. EVENTS & TIMERS ---
@@ -150,10 +155,9 @@ chrome.runtime.onInstalled.addListener(() => {
   setInterval(syncLocks, 5000);
 });
 
-// Start interval on load
 setInterval(syncLocks, 5000);
 
-// HANDLE MESSAGES FROM EXTENSION (Popup/Content)
+// HANDLE MESSAGES FROM EXTENSION
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.type === 'SYNC_LOCKS') {
     syncLocks().then(() => sendResponse({ success: true }));
@@ -172,7 +176,6 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
                 const list: string[] = (data as LocalData).unlockedExceptions || [];
                 if (!list.includes(hostname)) {
                     list.push(hostname);
-                    // FIX: await the set operation
                     await chrome.storage.local.set({ unlockedExceptions: list });
                 }
                 sendResponse({ success: true });
@@ -206,7 +209,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
 });
 
-// HANDLE MESSAGES FROM WEB APP (For Immediate Sync)
+// HANDLE MESSAGES FROM WEB APP
 chrome.runtime.onMessageExternal.addListener((msg, _sender, sendResponse) => {
     if (msg.type === 'SYNC_LOCKS') {
         console.log('[Background] External Sync Request Received');
