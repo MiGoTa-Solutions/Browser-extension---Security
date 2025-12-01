@@ -1,23 +1,23 @@
-/**
- * safeSendMessage
- * Safely sends a message to the Chrome Runtime, but ONLY if we are running
- * inside the extension context. Prevents crashes on the web app (localhost).
- */
-export const isExtensionContext = (): boolean => {
-  return (
-    typeof chrome !== 'undefined' &&
-    !!chrome.runtime &&
-    !!chrome.runtime.id // This is the key check: .id is undefined on web pages
-  );
-};
+// Hardcode your extension ID (you get this from chrome://extensions)
+// For development, this ID changes unless you set a "key" in manifest.json
+const EXTENSION_ID = "YOUR_ACTUAL_EXTENSION_ID_HERE"; 
 
 export const notifyExtensionSync = async () => {
-  if (isExtensionContext()) {
+  // If we are IN the extension, send normally
+  if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.id) {
+     try {
+       await chrome.runtime.sendMessage({ type: 'SYNC_LOCKS' });
+       return;
+     } catch (e) { /* ignore */ }
+  }
+
+  // If we are on the WEB APP, send to the specific Extension ID
+  if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
     try {
-      await chrome.runtime.sendMessage({ type: 'FORCE_SYNC' });
+      // This sends a message "externally" to the extension
+      await chrome.runtime.sendMessage(EXTENSION_ID, { type: 'SYNC_LOCKS' });
     } catch (e) {
-      // Ignore errors (e.g. background script sleeping)
-      console.debug('[ExtensionApi] Sync signal skipped');
+      console.warn("Extension not found or not installed.");
     }
   }
 };

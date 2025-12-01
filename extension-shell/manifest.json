@@ -45,7 +45,9 @@
         "popup/content.js",
         "popup/background.js"
       ],
-      "matches": ["<all_urls>"]
+      "matches": ["http://localhost:5173/*",
+      "http://localhost:4000/*",
+      "https://your-production-domain.com/*"]
     }
   ],
   "icons": {
