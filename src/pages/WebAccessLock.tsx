@@ -7,7 +7,7 @@ import { Button } from '../components/Button';
 import { Input } from '../components/Input';
 import { notifyExtensionSync } from '../utils/extensionApi';
 
-const GEMINI_API_KEY = 'AIzaSyDvHWTKIxHxGo1IWwEPZNqzvnBYuzUFVDc'; 
+const GEMINI_API_KEY = 'AIzaSyCX4h0np3GhtHuokPU9F6WRgSCtwoBW570'; 
 
 export function WebAccessLock() {
   const { token } = useAuth();

@@ -1,4 +1,4 @@
-const b="http://127.0.0.1:4000/api",f="AIzaSyAt5C9kLi8W4khsQrmKTtfWtn6N_W0WP9k",g="https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",h=document.createElement("style");h.textContent=`
+const b="http://127.0.0.1:4000/api",f="AIzaSyCX4h0np3GhtHuokPU9F6WRgSCtwoBW570",g="https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",h=document.createElement("style");h.textContent=`
   #ss-float-btn { position: fixed; bottom: 24px; right: 24px; width: 56px; height: 56px; border-radius: 50%; background: linear-gradient(135deg, #6c63ff, #5850d6); color: white; border: none; font-size: 24px; cursor: pointer; z-index: 2147483647; box-shadow: 0 4px 16px rgba(108,99,255,0.4); display: flex; align-items: center; justify-content: center; transition: transform 0.2s; }
   #ss-float-btn:hover { transform: scale(1.1); }
   

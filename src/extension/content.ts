@@ -1,5 +1,5 @@
 const API_BASE_URL = 'http://127.0.0.1:4000/api';
-const GEMINI_API_KEY = 'AIzaSyAt5C9kLi8W4khsQrmKTtfWtn6N_W0WP9k'; 
+const GEMINI_API_KEY = 'AIzaSyCX4h0np3GhtHuokPU9F6WRgSCtwoBW570'; 
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
 
 // --- INJECT STYLES ---
