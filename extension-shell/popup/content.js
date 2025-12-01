@@ -2,6 +2,7 @@ const m="http://127.0.0.1:4000/api",g=document.createElement("style");g.textCont
   #ss-float-btn { position: fixed; bottom: 24px; right: 24px; width: 56px; height: 56px; border-radius: 50%; background: linear-gradient(135deg, #6c63ff, #5850d6); color: white; border: none; font-size: 24px; cursor: pointer; z-index: 2147483647; box-shadow: 0 4px 16px rgba(108,99,255,0.4); display: flex; align-items: center; justify-content: center; transition: transform 0.2s; }
   #ss-float-btn:hover { transform: scale(1.1); }
   
+  /* Red Button Style for Re-Locking */
   #ss-float-btn.ss-unlocked { background: linear-gradient(135deg, #e74c3c, #c0392b); box-shadow: 0 4px 16px rgba(231,76,60,0.4); }
 
   .ss-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(5,8,22,0.85); backdrop-filter: blur(8px); z-index: 2147483647; display: flex; justify-content: center; align-items: center; }
@@ -14,6 +15,7 @@ const m="http://127.0.0.1:4000/api",g=document.createElement("style");g.textCont
   .ss-msg-user { background: #6c63ff; color: white; align-self: flex-end; margin-left: auto; }
   .ss-msg-ai { background: #2d3748; color: white; align-self: flex-start; margin-right: auto; }
 
+  /* TOAST NOTIFICATIONS */
   .ss-toast {
     position: fixed; top: 24px; left: 50%; transform: translateX(-50%) translateY(-100px);
     background: #1f2937; color: white; padding: 12px 24px; border-radius: 8px;
@@ -38,7 +40,7 @@ const m="http://127.0.0.1:4000/api",g=document.createElement("style");g.textCont
         <button class="ss-btn ss-btn-primary" id="ss-confirm">Lock Site</button>
       </div>
     </div>
-  `,document.body.appendChild(e);const o=document.getElementById("ss-close");o&&(o.onclick=()=>e.remove());const i=document.getElementById("ss-chat");i&&(i.onclick=()=>{e.remove(),k(n.description)});const r=document.getElementById("ss-confirm");r&&(r.onclick=async()=>{try{(await fetch(`${m}/locks`,{method:"POST",headers:{"Content-Type":"application/json",Authorization:`Bearer ${s}`},body:JSON.stringify({url:window.location.hostname,name:document.title})})).ok?(chrome.runtime.sendMessage({type:"SYNC_LOCKS"}),d("Site Locked! Refreshing...","success"),setTimeout(()=>window.location.reload(),1e3)):d("Failed to lock site.","error")}catch{d("Network Error.","error")}})}function k(n){const s=document.createElement("div");s.className="ss-overlay",s.innerHTML=`
+  `,document.body.appendChild(e);const o=document.getElementById("ss-close");o&&(o.onclick=()=>e.remove());const i=document.getElementById("ss-chat");i&&(i.onclick=()=>{e.remove(),k(n.description)});const r=document.getElementById("ss-confirm");r&&(r.onclick=async()=>{try{(await fetch(`${m}/locks`,{method:"POST",headers:{"Content-Type":"application/json",Authorization:`Bearer ${s}`},body:JSON.stringify({url:window.location.hostname,name:document.title})})).ok?(await chrome.runtime.sendMessage({type:"RELOCK_SITE",url:window.location.hostname}),chrome.runtime.sendMessage({type:"SYNC_LOCKS"}),d("Site Locked! Refreshing...","success"),setTimeout(()=>window.location.reload(),1e3)):d("Failed to lock site.","error")}catch{d("Network Error.","error")}})}function k(n){const s=document.createElement("div");s.className="ss-overlay",s.innerHTML=`
     <div class="ss-popup" style="height: 500px;">
       <h3 style="margin-top:0; color:#6c63ff">Chat about this Site</h3>
       <div id="ss-chat-box" style="flex:1; overflow-y:auto; background:rgba(0,0,0,0.2); padding:10px; border-radius:8px; margin-bottom:10px; display:flex; flex-direction:column;">

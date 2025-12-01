@@ -6,6 +6,7 @@ style.textContent = `
   #ss-float-btn { position: fixed; bottom: 24px; right: 24px; width: 56px; height: 56px; border-radius: 50%; background: linear-gradient(135deg, #6c63ff, #5850d6); color: white; border: none; font-size: 24px; cursor: pointer; z-index: 2147483647; box-shadow: 0 4px 16px rgba(108,99,255,0.4); display: flex; align-items: center; justify-content: center; transition: transform 0.2s; }
   #ss-float-btn:hover { transform: scale(1.1); }
   
+  /* Red Button Style for Re-Locking */
   #ss-float-btn.ss-unlocked { background: linear-gradient(135deg, #e74c3c, #c0392b); box-shadow: 0 4px 16px rgba(231,76,60,0.4); }
 
   .ss-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(5,8,22,0.85); backdrop-filter: blur(8px); z-index: 2147483647; display: flex; justify-content: center; align-items: center; }
@@ -18,6 +19,7 @@ style.textContent = `
   .ss-msg-user { background: #6c63ff; color: white; align-self: flex-end; margin-left: auto; }
   .ss-msg-ai { background: #2d3748; color: white; align-self: flex-start; margin-right: auto; }
 
+  /* TOAST NOTIFICATIONS */
   .ss-toast {
     position: fixed; top: 24px; left: 50%; transform: translateX(-50%) translateY(-100px);
     background: #1f2937; color: white; padding: 12px 24px; border-radius: 8px;
@@ -31,6 +33,7 @@ style.textContent = `
 `;
 document.head.appendChild(style);
 
+// --- HELPER TYPES ---
 interface SiteAnalysis {
   description: string;
   pros: string[];
@@ -46,8 +49,10 @@ interface StorageData {
   auth_token?: string;
 }
 
+// --- STATE TRACKING ---
 let isRelockMode = false;
 
+// --- UI HELPERS ---
 function showToast(message: string, type: 'success' | 'error' | 'info' = 'info') {
   const toast = document.createElement('div');
   toast.className = `ss-toast ${type}`;
@@ -61,6 +66,7 @@ function showToast(message: string, type: 'success' | 'error' | 'info' = 'info')
   }, 3000);
 }
 
+// --- MAIN LOGIC ---
 async function init() {
   const data = await chrome.storage.local.get(['lockedSites', 'unlockedExceptions']) as StorageData;
   const lockedSites = data.lockedSites || [];
@@ -100,6 +106,7 @@ async function handleLockClick() {
 
   const btn = document.getElementById('ss-float-btn');
 
+  // RE-LOCK LOGIC
   if (isRelockMode) {
     if (confirm('Re-lock this website?')) {
         if(btn) btn.innerHTML = '...';
@@ -110,20 +117,19 @@ async function handleLockClick() {
     return;
   }
 
+  // ANALYSIS LOGIC
   if (btn) btn.innerHTML = '⏳';
   
   try {
     const prompt = `Analyze ${window.location.href}. Return valid JSON only: {"description": "string", "pros": ["string"], "cons": ["string"]}`;
     
-    // 1. Sending request to YOUR backend (not Google directly)
-    // 2. Body format is { prompt: string }
     const res = await fetch(`${API_BASE_URL}/gemini/analyze`, {
       method: 'POST',
       headers: { 
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${auth_token}`
       },
-      body: JSON.stringify({ prompt }) 
+      body: JSON.stringify({ prompt })
     });
     
     if (!res.ok) {
@@ -189,6 +195,12 @@ function showPopup(data: SiteAnalysis, token: string) {
       });
 
       if(res.ok) {
+        // --- CRITICAL FIX START ---
+        // Force-clear any stale "unlock" exception for this domain
+        // This ensures the site is actually blocked immediately
+        await chrome.runtime.sendMessage({ type: 'RELOCK_SITE', url: window.location.hostname });
+        // --- CRITICAL FIX END ---
+
         chrome.runtime.sendMessage({ type: 'SYNC_LOCKS' });
         showToast('Site Locked! Refreshing...', 'success');
         setTimeout(() => window.location.reload(), 1000);
@@ -244,7 +256,6 @@ function showChatOverlay(context: string) {
 
       if (!token) throw new Error('Not authenticated');
 
-      // FIX: Using Backend URL with simple body format for chat as well
       const res = await fetch(`${API_BASE_URL}/gemini/analyze`, {
         method: 'POST',
         headers: { 
