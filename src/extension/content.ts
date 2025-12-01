@@ -115,14 +115,15 @@ async function handleLockClick() {
   try {
     const prompt = `Analyze ${window.location.href}. Return valid JSON only: {"description": "string", "pros": ["string"], "cons": ["string"]}`;
     
-    // FIX: Using Backend URL with simple body format
+    // 1. Sending request to YOUR backend (not Google directly)
+    // 2. Body format is { prompt: string }
     const res = await fetch(`${API_BASE_URL}/gemini/analyze`, {
       method: 'POST',
       headers: { 
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${auth_token}`
       },
-      body: JSON.stringify({ prompt }) // <--- CORRECT: Sending just { prompt: ... }
+      body: JSON.stringify({ prompt }) 
     });
     
     if (!res.ok) {
@@ -241,14 +242,16 @@ function showChatOverlay(context: string) {
       const data = await chrome.storage.local.get('auth_token') as StorageData;
       const token = data.auth_token;
 
-      // FIX: Using Backend URL with simple body format
+      if (!token) throw new Error('Not authenticated');
+
+      // FIX: Using Backend URL with simple body format for chat as well
       const res = await fetch(`${API_BASE_URL}/gemini/analyze`, {
         method: 'POST',
         headers: { 
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify({ prompt: `Context: ${context}. User Question: ${msg}` }) // <--- CORRECT
+        body: JSON.stringify({ prompt: `Context: ${context}. User Question: ${msg}` })
       });
       
       const dataRes = await res.json();
