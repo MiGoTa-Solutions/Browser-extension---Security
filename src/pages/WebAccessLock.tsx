@@ -5,6 +5,7 @@ import { webAccessLockApi } from '../services/api';
 import { TabLock } from '../types';
 import { Button } from '../components/Button';
 import { Input } from '../components/Input';
+import { AlertDialog } from '../components/AlertDialog';
 import { notifyExtensionSync } from '../utils/extensionApi';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api';
@@ -23,6 +24,29 @@ export function WebAccessLock() {
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [loadingSuggestions, setLoadingSuggestions] = useState(false);
   const [suggestionError, setSuggestionError] = useState<string | null>(null);
+
+  // Alert Dialog State
+  const [alertDialog, setAlertDialog] = useState<{
+    isOpen: boolean;
+    type: 'success' | 'error' | 'warning' | 'info' | 'confirm';
+    title: string;
+    message: string;
+    onConfirm?: () => void;
+  }>({
+    isOpen: false,
+    type: 'info',
+    title: '',
+    message: ''
+  });
+
+  // Delete Confirmation State
+  const [deleteConfirm, setDeleteConfirm] = useState<{
+    isOpen: boolean;
+    lockId: number | null;
+  }>({
+    isOpen: false,
+    lockId: null
+  });
 
   useEffect(() => {
     if (token) fetchLocks();
@@ -65,21 +89,57 @@ export function WebAccessLock() {
       setSuggestions(prev => prev.filter(s => s !== url));
       await fetchLocks();
       notifyExtensionSync(); // Triggers immediate sync in background
+      
+      // Show success alert
+      setAlertDialog({
+        isOpen: true,
+        type: 'success',
+        title: 'Success!',
+        message: `${url} has been locked successfully.`
+      });
     } catch (err) {
-      alert('Failed to add lock.');
+      setAlertDialog({
+        isOpen: true,
+        type: 'error',
+        title: 'Failed to Add Lock',
+        message: 'Unable to lock the website. Please try again.'
+      });
     } finally {
       setSubmitting(false);
     }
   };
 
   const handleDelete = async (id: number) => {
-    if (!token || !confirm('Unlock this site?')) return;
+    if (!token) return;
+    setDeleteConfirm({
+      isOpen: true,
+      lockId: id
+    });
+  };
+
+  const confirmDelete = async () => {
+    if (!token || !deleteConfirm.lockId) return;
     try {
-      await webAccessLockApi.delete(token, id);
+      await webAccessLockApi.delete(token, deleteConfirm.lockId);
       await fetchLocks();
       notifyExtensionSync();
+      
+      setAlertDialog({
+        isOpen: true,
+        type: 'success',
+        title: 'Unlocked!',
+        message: 'The website has been unlocked successfully.'
+      });
     } catch (err) {
       console.error(err);
+      setAlertDialog({
+        isOpen: true,
+        type: 'error',
+        title: 'Failed to Unlock',
+        message: 'Unable to unlock the website. Please try again.'
+      });
+    } finally {
+      setDeleteConfirm({ isOpen: false, lockId: null });
     }
   };
 
@@ -208,6 +268,28 @@ export function WebAccessLock() {
             {!loading && locks.length === 0 && <div className="p-8 text-center text-gray-400">No locks active.</div>}
         </div>
       </div>
+
+      {/* Alert Dialog */}
+      <AlertDialog
+        isOpen={alertDialog.isOpen}
+        onClose={() => setAlertDialog(prev => ({ ...prev, isOpen: false }))}
+        onConfirm={alertDialog.onConfirm}
+        title={alertDialog.title}
+        message={alertDialog.message}
+        type={alertDialog.type}
+      />
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog
+        isOpen={deleteConfirm.isOpen}
+        onClose={() => setDeleteConfirm({ isOpen: false, lockId: null })}
+        onConfirm={confirmDelete}
+        title="Unlock Website?"
+        message="Are you sure you want to unlock this website? It will become accessible again."
+        type="confirm"
+        confirmText="Yes, Unlock"
+        cancelText="Cancel"
+      />
     </div>
   );
 }

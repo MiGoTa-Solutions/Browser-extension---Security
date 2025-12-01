@@ -66,6 +66,140 @@ function showToast(message: string, type: 'success' | 'error' | 'info' = 'info')
   }, 3000);
 }
 
+function showConfirmDialog(title: string, message: string, onConfirm: () => void) {
+  const overlay = document.createElement('div');
+  overlay.className = 'ss-overlay';
+  overlay.style.animation = 'fadeIn 0.3s ease-out';
+  
+  const dialog = document.createElement('div');
+  dialog.style.cssText = `
+    background: white;
+    border-radius: 20px;
+    padding: 32px;
+    max-width: 450px;
+    width: 90%;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+    transform: scale(0.9);
+    animation: scaleIn 0.3s ease-out forwards;
+    text-align: center;
+  `;
+  
+  const iconDiv = document.createElement('div');
+  iconDiv.style.cssText = `
+    background: linear-gradient(135deg, #3b82f6, #2563eb);
+    width: 64px;
+    height: 64px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto 20px;
+    font-size: 32px;
+  `;
+  iconDiv.textContent = '🔒';
+  
+  const titleEl = document.createElement('h3');
+  titleEl.style.cssText = `
+    color: #1f2937;
+    font-size: 24px;
+    font-weight: 700;
+    margin: 0 0 12px 0;
+    font-family: system-ui, sans-serif;
+  `;
+  titleEl.textContent = title;
+  
+  const messageEl = document.createElement('p');
+  messageEl.style.cssText = `
+    color: #6b7280;
+    font-size: 16px;
+    line-height: 1.6;
+    margin: 0 0 24px 0;
+    font-family: system-ui, sans-serif;
+  `;
+  messageEl.textContent = message;
+  
+  const buttonContainer = document.createElement('div');
+  buttonContainer.style.cssText = `
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+  `;
+  
+  const cancelBtn = document.createElement('button');
+  cancelBtn.style.cssText = `
+    background: #f3f4f6;
+    color: #374151;
+    border: none;
+    padding: 12px 24px;
+    border-radius: 10px;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    font-family: system-ui, sans-serif;
+    transition: all 0.2s;
+    flex: 1;
+  `;
+  cancelBtn.textContent = 'Cancel';
+  cancelBtn.onmouseover = () => cancelBtn.style.background = '#e5e7eb';
+  cancelBtn.onmouseout = () => cancelBtn.style.background = '#f3f4f6';
+  cancelBtn.onclick = () => overlay.remove();
+  
+  const confirmBtn = document.createElement('button');
+  confirmBtn.style.cssText = `
+    background: linear-gradient(135deg, #3b82f6, #2563eb);
+    color: white;
+    border: none;
+    padding: 12px 24px;
+    border-radius: 10px;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    font-family: system-ui, sans-serif;
+    transition: all 0.2s;
+    flex: 1;
+  `;
+  confirmBtn.textContent = 'Yes, Re-lock';
+  confirmBtn.onmouseover = () => confirmBtn.style.transform = 'scale(1.05)';
+  confirmBtn.onmouseout = () => confirmBtn.style.transform = 'scale(1)';
+  confirmBtn.onclick = () => {
+    overlay.remove();
+    onConfirm();
+  };
+  
+  // Add keyframe animations
+  if (!document.getElementById('ss-confirm-animations')) {
+    const animStyle = document.createElement('style');
+    animStyle.id = 'ss-confirm-animations';
+    animStyle.textContent = `
+      @keyframes fadeIn {
+        from { opacity: 0; }
+        to { opacity: 1; }
+      }
+      @keyframes scaleIn {
+        from { transform: scale(0.9); opacity: 0; }
+        to { transform: scale(1); opacity: 1; }
+      }
+    `;
+    document.head.appendChild(animStyle);
+  }
+  
+  buttonContainer.appendChild(cancelBtn);
+  buttonContainer.appendChild(confirmBtn);
+  
+  dialog.appendChild(iconDiv);
+  dialog.appendChild(titleEl);
+  dialog.appendChild(messageEl);
+  dialog.appendChild(buttonContainer);
+  
+  overlay.appendChild(dialog);
+  document.body.appendChild(overlay);
+  
+  // Close on outside click
+  overlay.onclick = (e) => {
+    if (e.target === overlay) overlay.remove();
+  };
+}
+
 // --- MAIN LOGIC ---
 async function init() {
   const data = await chrome.storage.local.get(['lockedSites', 'unlockedExceptions']) as StorageData;
@@ -108,12 +242,16 @@ async function handleLockClick() {
 
   // RE-LOCK LOGIC
   if (isRelockMode) {
-    if (confirm('Re-lock this website?')) {
+    showConfirmDialog(
+      '🔒 Re-lock Website?',
+      'Do you want to re-lock this website? You will need your Master PIN to access it again.',
+      async () => {
         if(btn) btn.innerHTML = '...';
         await chrome.runtime.sendMessage({ type: 'RELOCK_SITE', url: window.location.hostname });
         showToast('Site Locked!', 'success');
         setTimeout(() => window.location.reload(), 1000);
-    }
+      }
+    );
     return;
   }
 
