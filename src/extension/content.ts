@@ -1,6 +1,4 @@
 const API_BASE_URL = 'http://127.0.0.1:4000/api';
-const GEMINI_API_KEY = 'AIzaSyCX4h0np3GhtHuokPU9F6WRgSCtwoBW570'; 
-const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
 
 // --- INJECT STYLES ---
 const style = document.createElement('style');
@@ -125,10 +123,13 @@ async function handleLockClick() {
   try {
     const prompt = `Analyze ${window.location.href}. Return valid JSON only: {"description": "string", "pros": ["string"], "cons": ["string"]}`;
     
-    const res = await fetch(`${GEMINI_API_URL}?key=${GEMINI_API_KEY}`, {
+    const res = await fetch(`${API_BASE_URL}/gemini/analyze`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+      headers: { 
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${auth_token}`
+      },
+      body: JSON.stringify({ prompt })
     });
     
     if (!res.ok) {
@@ -243,17 +244,27 @@ function showChatOverlay(context: string) {
     box.scrollTop = box.scrollHeight;
 
     try {
-      const res = await fetch(`${GEMINI_API_URL}?key=${GEMINI_API_KEY}`, {
+      const data = await chrome.storage.local.get('auth_token') as StorageData;
+      const token = data.auth_token;
+      
+      if (!token) {
+        throw new Error('Not authenticated');
+      }
+
+      const res = await fetch(`${API_BASE_URL}/gemini/analyze`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contents: [{ parts: [{ text: `Context: ${context}. User Question: ${msg}` }] }] })
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ prompt: `Context: ${context}. User Question: ${msg}` })
       });
-      const data = await res.json();
-      if (!res.ok || !data.candidates) throw new Error('AI Error');
+      const responseData = await res.json();
+      if (!res.ok || !responseData.candidates) throw new Error('AI Error');
       
       const aiDiv = document.createElement('div');
       aiDiv.className = 'ss-chat-msg ss-msg-ai';
-      aiDiv.textContent = data.candidates[0].content.parts[0].text;
+      aiDiv.textContent = responseData.candidates[0].content.parts[0].text;
       box.appendChild(aiDiv);
     } catch (e) {
       const errDiv = document.createElement('div');

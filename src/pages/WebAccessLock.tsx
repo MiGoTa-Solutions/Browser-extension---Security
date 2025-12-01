@@ -7,7 +7,7 @@ import { Button } from '../components/Button';
 import { Input } from '../components/Input';
 import { notifyExtensionSync } from '../utils/extensionApi';
 
-const GEMINI_API_KEY = 'AIzaSyCX4h0np3GhtHuokPU9F6WRgSCtwoBW570'; 
+const API_BASE_URL = import.meta.env.VITE_API_URL || '/api';
 
 export function WebAccessLock() {
   const { token } = useAuth();
@@ -106,10 +106,13 @@ export function WebAccessLock() {
     const prompt = `Analyze this frequency data: ${JSON.stringify(websiteFrequency)}. Suggest 3 distracting domains to lock. Return ONLY a JSON array of strings. Example: ["youtube.com"]`;
 
     try {
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`, {
+      const response = await fetch(`${API_BASE_URL}/gemini/analyze`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ prompt })
       });
       const data = await response.json();
       const text = data.candidates[0].content.parts[0].text.replace(/```json|```/g, '').trim();
