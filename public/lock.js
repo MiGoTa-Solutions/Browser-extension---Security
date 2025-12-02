@@ -17,14 +17,19 @@ document.addEventListener('DOMContentLoaded', () => {
     if (targetUrl && headerContainer) {
         try {
             const domain = new URL(targetUrl).hostname;
-            const iconUrl = `https://www.google.com/s2/favicons?domain=${domain}&sz=128`; // Larger icon
+            const iconUrl = `https://www.google.com/s2/favicons?domain=${domain}&sz=128`;
             
             const img = document.createElement('img');
             img.src = iconUrl;
-            img.className = 'w-16 h-16 rounded-xl shadow-md mx-auto mb-4'; // Tailwind classes
+            img.className = 'favicon';
             img.alt = `${domain} icon`;
+            img.style.display = 'block';
             
             headerContainer.appendChild(img);
+            
+            const defaultIcon = document.getElementById('default-icon');
+            if (defaultIcon) defaultIcon.style.display = 'none';
+            
             if (titleElement) {
                 titleElement.innerText = `Locked: ${domain.replace('www.', '')}`;
             }
@@ -117,9 +122,9 @@ document.addEventListener('DOMContentLoaded', () => {
         if (isRedirecting) return;
         const pin = input.value;
         
-        btn.innerHTML = '<svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Verifying...';
+        btn.innerHTML = '<span class="spinner"></span>Verifying...';
         btn.disabled = true;
-        errorMsg.classList.add('hidden');
+        errorMsg.style.display = 'none';
 
         try {
             const { auth_token } = await chrome.storage.local.get('auth_token');
@@ -152,7 +157,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 setTimeout(finishUnlock, 500); 
 
             } else {
-                errorMsg.classList.remove('hidden');
+                errorMsg.style.display = 'flex';
                 input.value = '';
                 btn.textContent = 'Unlock Access';
                 btn.disabled = false;

@@ -18,13 +18,13 @@ export default defineConfig({
     rollupOptions: {
       input: {
         main: resolve(__dirname, 'index.html'),
-        // FIX: Point to src/extension instead of public/
+        lock: resolve(__dirname, 'public/lock.html'), // FIX: Added lock.html as entry point
         background: resolve(__dirname, 'src/extension/background.ts'),
         content: resolve(__dirname, 'src/extension/content.ts'),
       },
       output: {
         entryFileNames: (chunkInfo) => {
-          if (chunkInfo.name === 'background' || chunkInfo.name === 'content') {
+          if (['background', 'content', 'lock'].includes(chunkInfo.name)) {
             return '[name].js';
           }
           return '[name]-[hash].js';
