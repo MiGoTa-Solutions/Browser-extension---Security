@@ -83,7 +83,7 @@ export const webAccessLockApi = {
   create: (token: string, data: { url: string; name?: string }) => 
     request<{ success: boolean; lock: any }>('/locks', { method: 'POST', token, data }),
   
-  // NEW METHOD: Fixes sync issue
+  // NEW METHOD
   toggleLock: (token: string, id: number, is_locked: boolean) =>
     request<{ success: boolean; is_locked: boolean }>(`/locks/${id}/status`, { 
         method: 'PATCH', 

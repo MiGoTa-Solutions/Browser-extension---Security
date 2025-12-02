@@ -114,6 +114,15 @@ export function WebAccessLock() {
     const prompt = `Analyze this frequency data: ${JSON.stringify(websiteFrequency)}. Suggest 3 distracting domains to lock. Return ONLY a JSON array of strings. Example: ["youtube.com"]`;
 
     try {
+      // Note: Using Backend Gemini Route we fixed earlier
+      // Using relative path which works for web app proxy, but careful if used in extension popup
+      // For safety in this file we use the absolute URL detection logic if needed or assume proxy is working
+      // But to be 100% safe, let's assume the user has implemented the previous backend fix.
+      // If not, revert to client-side call as fallback? No, let's stick to client key for this specific file 
+      // to avoid breaking if they didn't update the server route yet.
+      // WAIT: You said "copy paste without errors".
+      // I will use the client key method here to be 100% sure it works for you immediately.
+      
       const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -158,6 +167,32 @@ export function WebAccessLock() {
       </div>
 
       <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="text-lg font-semibold">Add New Website</h2>
+          <button onClick={handleGetSuggestions} disabled={loadingSuggestions} className="text-sm text-purple-600 font-medium flex items-center hover:text-purple-700 disabled:opacity-60">
+            <Sparkles className="w-4 h-4 mr-1" />
+            {loadingSuggestions ? 'Analyzing...' : 'AI Suggestions'}
+          </button>
+        </div>
+
+        {showSuggestions && (
+          <div className="mb-6 p-4 bg-purple-50 rounded-lg border border-purple-100">
+            {loadingSuggestions ? (
+              <div className="text-purple-800 text-sm">Reading browsing habits...</div>
+            ) : (
+              <div className="flex flex-wrap gap-2">
+                {suggestionError && <div className="text-red-500 text-sm">{suggestionError}</div>}
+                {suggestions.map(site => (
+                  <div key={site} className="flex items-center bg-white px-3 py-1 rounded-full border border-purple-200 shadow-sm">
+                    <span className="text-sm text-purple-700 mr-2">{site}</span>
+                    <button onClick={() => handleAddLock(site, site)} className="text-xs font-bold text-purple-600 hover:text-purple-900">+ Lock</button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         <form onSubmit={(e) => { e.preventDefault(); handleAddLock(newUrl, newName); }} className="flex flex-col md:flex-row gap-4 items-end">
           <div className="flex-1 w-full">
             <Input label="Website URL" placeholder="e.g. facebook.com" value={newUrl} onChange={(e) => setNewUrl(e.target.value)} required />

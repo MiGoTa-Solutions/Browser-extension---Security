@@ -12,6 +12,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const targetUrl = params.get('url');
     const lockId = params.get('id'); 
 
+    // Prevent infinite redirect loops
+    let isRedirecting = false;
+
     // --- UI Helper ---
     function showNotification(message, isError = false) {
         let toast = document.getElementById('lock-toast');
@@ -26,12 +29,10 @@ document.addEventListener('DOMContentLoaded', () => {
             `;
             document.body.appendChild(toast);
         }
-        
         toast.textContent = message;
         toast.style.backgroundColor = isError ? '#ef4444' : '#10b981';
         toast.style.transform = 'translateX(-50%) translateY(0)';
         toast.style.opacity = '1';
-        
         setTimeout(() => {
             toast.style.opacity = '0';
             toast.style.transform = 'translateX(-50%) translateY(-20px)';
@@ -39,6 +40,9 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     const finishUnlock = () => {
+        if (isRedirecting) return; // STOP DOUBLE CALLS
+        isRedirecting = true;
+
         if (targetUrl) {
             window.location.href = targetUrl;
         } else {
@@ -48,6 +52,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- REAL-TIME STATUS CHECKER ---
     const checkLockStatus = async () => {
+        if (isRedirecting) return;
+
         try {
             const data = await chrome.storage.local.get(['lockedSites', 'unlockedExceptions']);
             const lockedSites = data.lockedSites || [];
@@ -60,21 +66,15 @@ document.addEventListener('DOMContentLoaded', () => {
             let isLocallyUnlocked = false;
             if (targetUrl) {
                 try {
-                    // Extract hostname to match background.ts logic
                     let hostname = new URL(targetUrl).hostname.toLowerCase();
                     hostname = hostname.replace(/^(www\.)/, '');
-                    
                     isLocallyUnlocked = exceptions.some(ex => ex.includes(hostname));
                 } catch(e) {}
             }
 
-            // CRITICAL LOGIC:
-            // Redirect IF:
-            // a) The lock doesn't exist anymore (Deleted in Web App)
-            // b) The lock exists but is_locked is FALSE (Toggled in Web App)
-            // c) The user has a local exception (Unlocked via PIN previously)
+            // REDIRECT IF: Lock removed, Lock disabled, or Exception exists
             if (!currentLock || !currentLock.is_locked || isLocallyUnlocked) {
-                console.log("Site unlocked! Redirecting...");
+                console.log("Status change detected. Unlocking...");
                 finishUnlock();
             }
         } catch (err) {
@@ -85,18 +85,18 @@ document.addEventListener('DOMContentLoaded', () => {
     // Check once on load
     checkLockStatus();
 
-    // Check whenever storage changes (triggered by Web App Sync or PIN unlock)
+    // Check whenever storage changes (triggered by Sync or PIN unlock)
     chrome.storage.onChanged.addListener((changes, area) => {
-        if (area === 'local') {
+        if (area === 'local' && !isRedirecting) {
             checkLockStatus();
         }
     });
-    // --------------------------------
 
     form.addEventListener('submit', async (e) => {
         e.preventDefault();
+        if (isRedirecting) return;
+
         const pin = input.value;
-        
         btn.textContent = 'Verifying...';
         btn.disabled = true;
         errorMsg.style.display = 'none';
@@ -106,7 +106,6 @@ document.addEventListener('DOMContentLoaded', () => {
             
             if (!auth_token) {
                 showNotification('Please log in to SecureShield extension.', true);
-                btn.textContent = 'Unlock Access';
                 btn.disabled = false;
                 return;
             }
@@ -118,27 +117,26 @@ document.addEventListener('DOMContentLoaded', () => {
             });
 
             if (response.ok) {
-                showNotification('Unlocked! Updating status...', false);
+                showNotification('Unlocked! Redirecting...', false);
                 
-                // 1. Update Server Status
+                // 1. UPDATE SERVER STATUS (Syncs to Web App)
                 if (lockId) {
-                    try {
-                        await fetch(`${API_BASE_URL}/locks/${lockId}/status`, {
-                            method: 'PATCH',
-                            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${auth_token}` },
-                            body: JSON.stringify({ is_locked: false })
-                        });
-                    } catch (err) {
-                        console.error("Failed to update server status:", err);
-                    }
+                    // We do this asynchronously and don't wait for it to redirect user faster
+                    fetch(`${API_BASE_URL}/locks/${lockId}/status`, {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${auth_token}` },
+                        body: JSON.stringify({ is_locked: false })
+                    }).catch(err => console.error("Server update failed", err));
                 }
 
-                // 2. Whitelist Locally & Sync
-                // Note: We don't rely purely on this sendMessage callback anymore.
-                // The checkLockStatus() listener above will handle the redirection 
-                // once the storage updates.
+                // 2. WHITELIST LOCALLY
                 chrome.runtime.sendMessage({ type: 'UNLOCK_SITE', url: targetUrl });
+                
+                // 3. TRIGGER SYNC (Background will eventually see server status)
                 chrome.runtime.sendMessage({ type: 'SYNC_LOCKS' });
+
+                // 4. Redirect immediately (checkLockStatus will also catch this, but this is faster)
+                setTimeout(finishUnlock, 500);
 
             } else {
                 errorMsg.style.display = 'block';

@@ -20,7 +20,7 @@ interface TabLockRow extends RowDataPacket {
   created_at: string;
 }
 
-// GET /api/locks - List all locked sites
+// GET /api/locks
 router.get('/', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const [rows] = await pool.query<TabLockRow[]>(
@@ -40,7 +40,7 @@ router.get('/', requireAuth, async (req: AuthenticatedRequest, res: Response) =>
   }
 });
 
-// PATCH /api/locks/:id/status - Toggle Lock Status
+// PATCH /api/locks/:id/status - Toggle Lock Status (Needed for Sync)
 router.patch('/:id/status', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
   const { is_locked } = req.body;
   
@@ -65,7 +65,7 @@ router.patch('/:id/status', requireAuth, async (req: AuthenticatedRequest, res: 
   }
 });
 
-// POST /api/locks - Add a new lock
+// POST /api/locks
 router.post('/', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
   const parsed = lockSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -83,7 +83,6 @@ router.post('/', requireAuth, async (req: AuthenticatedRequest, res: Response) =
 
     if (existing.length > 0) {
       const lock = existing[0];
-      
       if (lock.is_locked) {
         return res.status(409).json({ error: 'This site is already locked.' });
       } else {
@@ -91,17 +90,10 @@ router.post('/', requireAuth, async (req: AuthenticatedRequest, res: Response) =
           'UPDATE tab_locks SET is_locked = true, created_at = NOW() WHERE id = ?',
           [lock.id]
         );
-        
         return res.status(200).json({ 
           success: true, 
           message: 'Site re-locked successfully',
-          lock: { 
-            id: lock.id, 
-            url, 
-            lock_name: name || url, 
-            is_locked: true, 
-            created_at: new Date().toISOString() 
-          } 
+          lock: { id: lock.id, url, lock_name: name || url, is_locked: true, created_at: new Date().toISOString() } 
         });
       }
     }
@@ -131,7 +123,7 @@ router.post('/', requireAuth, async (req: AuthenticatedRequest, res: Response) =
   }
 });
 
-// DELETE /api/locks/:id - Remove a lock
+// DELETE /api/locks/:id
 router.delete('/:id', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const [result] = await pool.execute<ResultSetHeader>(
