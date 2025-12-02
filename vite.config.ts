@@ -18,7 +18,7 @@ export default defineConfig({
     rollupOptions: {
       input: {
         main: resolve(__dirname, 'index.html'),
-        lock: resolve(__dirname, 'public/lock.html'), // FIX: Added lock.html as entry point
+        lock: resolve(__dirname, 'lock.html'), // FIX: Points to root lock.html
         background: resolve(__dirname, 'src/extension/background.ts'),
         content: resolve(__dirname, 'src/extension/content.ts'),
       },
