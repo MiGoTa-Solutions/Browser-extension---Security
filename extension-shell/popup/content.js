@@ -70,7 +70,7 @@ const h="http://127.0.0.1:4000/api",x=document.createElement("style");x.textCont
     border-radius: 10px;
     font-size: 15px;
     font-weight: 600;
-    cursor: pointer;
+    cursor: pointer;  
     font-family: system-ui, sans-serif;
     transition: all 0.2s;
     flex: 1;

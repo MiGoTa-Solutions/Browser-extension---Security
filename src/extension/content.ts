@@ -134,7 +134,7 @@ function showConfirmDialog(title: string, message: string, onConfirm: () => void
     border-radius: 10px;
     font-size: 15px;
     font-weight: 600;
-    cursor: pointer;
+    cursor: pointer;  
     font-family: system-ui, sans-serif;
     transition: all 0.2s;
     flex: 1;
