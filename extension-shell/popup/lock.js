@@ -1,3 +1,4 @@
+// This runs on the lock page
 const API_BASE_URL = 'http://127.0.0.1:4000/api';
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -5,10 +6,33 @@ document.addEventListener('DOMContentLoaded', () => {
     const input = document.getElementById('pin');
     const errorMsg = document.getElementById('errorMsg');
     const btn = document.getElementById('unlockBtn');
+    const titleElement = document.getElementById('lock-title');
+    const headerContainer = document.getElementById('header-container');
 
     const params = new URLSearchParams(window.location.search);
     const targetUrl = params.get('url');
     const lockId = params.get('id'); 
+
+    // --- UI: Favicon Injection ---
+    if (targetUrl && headerContainer) {
+        try {
+            const domain = new URL(targetUrl).hostname;
+            const iconUrl = `https://www.google.com/s2/favicons?domain=${domain}&sz=128`; // Larger icon
+            
+            const img = document.createElement('img');
+            img.src = iconUrl;
+            img.className = 'w-16 h-16 rounded-xl shadow-md mx-auto mb-4'; // Tailwind classes
+            img.alt = `${domain} icon`;
+            
+            headerContainer.appendChild(img);
+            if (titleElement) {
+                titleElement.innerText = `Locked: ${domain.replace('www.', '')}`;
+            }
+        } catch (e) {
+            console.error('Favicon load failed', e);
+        }
+    }
+    // ---------------------------
 
     let isRedirecting = false;
 
@@ -22,13 +46,29 @@ document.addEventListener('DOMContentLoaded', () => {
                 padding: 12px 24px; border-radius: 8px; color: white; font-weight: 600; z-index: 100;
                 opacity: 0; transition: all 0.3s ease; box-shadow: 0 10px 25px rgba(0,0,0,0.2);
                 font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                display: flex; align-items: center; gap: 8px;
             `;
+            
+            // Add an icon to the toast
+            const icon = document.createElement('span');
+            icon.innerHTML = isError ? 
+                '<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd" /></svg>' : 
+                '<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM3.857 9.309a1 1 0 011.414-1.414L8.586 11.172l6.143-6.143a1 1 0 011.414 1.414l-7.557 7.557a1 1 0 01-1.414 0L3.857 9.309z" clip-rule="evenodd" /></svg>';
+            toast.appendChild(icon);
+            
+            const textNode = document.createTextNode(message);
+            toast.appendChild(textNode);
+
             document.body.appendChild(toast);
+        } else {
+            // Update existing toast
+            toast.lastChild.textContent = message;
         }
-        toast.textContent = message;
+        
         toast.style.backgroundColor = isError ? '#ef4444' : '#10b981';
         toast.style.transform = 'translateX(-50%) translateY(0)';
         toast.style.opacity = '1';
+        
         setTimeout(() => {
             toast.style.opacity = '0';
             toast.style.transform = 'translateX(-50%) translateY(-20px)';
@@ -60,7 +100,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 } catch(e) {}
             }
 
-            // Redirect if lock deleted, disabled, or locally excepted
             if (!currentLock || !currentLock.is_locked || isLocallyUnlocked) {
                 console.log("Status change detected. Unlocking...");
                 finishUnlock();
@@ -78,15 +117,16 @@ document.addEventListener('DOMContentLoaded', () => {
         if (isRedirecting) return;
         const pin = input.value;
         
-        btn.textContent = 'Verifying...';
+        btn.innerHTML = '<svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Verifying...';
         btn.disabled = true;
-        errorMsg.style.display = 'none';
+        errorMsg.classList.add('hidden');
 
         try {
             const { auth_token } = await chrome.storage.local.get('auth_token');
             if (!auth_token) {
                 showNotification('Please log in to SecureShield extension.', true);
                 btn.disabled = false;
+                btn.textContent = 'Unlock Access';
                 return;
             }
 
@@ -99,7 +139,6 @@ document.addEventListener('DOMContentLoaded', () => {
             if (response.ok) {
                 showNotification('Unlocked! Redirecting...', false);
                 
-                // Update Server
                 if (lockId) {
                     fetch(`${API_BASE_URL}/locks/${lockId}/status`, {
                         method: 'PATCH',
@@ -113,10 +152,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 setTimeout(finishUnlock, 500); 
 
             } else {
-                errorMsg.style.display = 'block';
+                errorMsg.classList.remove('hidden');
                 input.value = '';
                 btn.textContent = 'Unlock Access';
                 btn.disabled = false;
+                input.focus();
             }
         } catch (error) {
             showNotification('Connection error.', true);

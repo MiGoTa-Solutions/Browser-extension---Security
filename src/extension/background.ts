@@ -37,8 +37,10 @@ async function enforceLocksOnActiveTabs(lockedSites: TabLock[], exceptions: stri
       const hostname = normalizeDomain(tab.url);
       if (!hostname) continue;
 
-      if (exceptions.some((u) => hostname === u || hostname.endsWith('.' + u))) continue;
+      // Check if exception exists
+      if (exceptions && exceptions.some((u) => hostname === u || hostname.endsWith('.' + u))) continue;
 
+      // Check if matched lock
       const matchedLock = lockedSites.find((lock) => {
         if (!lock.is_locked) return false;
         return hostname === lock.url || hostname.endsWith('.' + lock.url);
@@ -51,7 +53,9 @@ async function enforceLocksOnActiveTabs(lockedSites: TabLock[], exceptions: stri
         chrome.tabs.update(tab.id, { url: lockPageUrl });
       }
     }
-  } catch (e) {}
+  } catch (e) {
+    // Ignore errors
+  }
 }
 
 // --- 2. SYNC LOCKS FROM SERVER ---
@@ -85,13 +89,13 @@ async function syncLocks() {
       // --- EXPIRY LOGIC START ---
       const now = Date.now();
       const expiryMap = (data.exceptionExpiry || {}) as Record<string, number>;
-      let exceptions = (data.unlockedExceptions || []) as string[];
+      // FIX: Ensure exceptions is always an array
+      let exceptions = Array.isArray(data.unlockedExceptions) ? data.unlockedExceptions : [];
 
       // Filter 1: Remove Expired Exceptions (Auto-Relock)
       const validExceptions = exceptions.filter(domain => {
           const expiresAt = expiryMap[domain];
-          // If no expiry set (legacy), default to valid, or you could expire them. Keeping valid for safety.
-          if (!expiresAt) return true; 
+          if (!expiresAt) return true; // Keep legacy exceptions
           return expiresAt > now;
       });
 
@@ -101,17 +105,17 @@ async function syncLocks() {
          activeLockDomains.some(lockUrl => domain.includes(lockUrl))
       );
 
-      // Filter 3: Cleanup Expiry Map (Remove keys for domains no longer in whitelist)
+      // Filter 3: Cleanup Expiry Map
       const finalExpiryMap: Record<string, number> = {};
       cleanedExceptions.forEach(domain => {
           if (expiryMap[domain]) finalExpiryMap[domain] = expiryMap[domain];
       });
       // --- EXPIRY LOGIC END ---
 
-      // Deep compare to avoid infinite loops
+      // Deep compare
       const currentLocks = data.lockedSites || [];
       const hasChanged = JSON.stringify(normalizedLocks) !== JSON.stringify(currentLocks) ||
-                         JSON.stringify(cleanedExceptions) !== JSON.stringify(exceptions); // Compare against original list
+                         JSON.stringify(cleanedExceptions) !== JSON.stringify(exceptions);
 
       if (hasChanged) {
           await chrome.storage.local.set({ 
@@ -120,7 +124,7 @@ async function syncLocks() {
             exceptionExpiry: finalExpiryMap, 
             lastSync: Date.now() 
           });
-          console.log(`[Background] Synced. Active Locks: ${normalizedLocks.length}. Exceptions cleaned.`);
+          console.log(`[Background] Synced. Active Locks: ${normalizedLocks.length}`);
       }
       
       enforceLocksOnActiveTabs(normalizedLocks, cleanedExceptions);
@@ -155,7 +159,8 @@ async function handleNavigation(details: { frameId: number; url: string; tabId: 
   // Check Locks
   const data = await chrome.storage.local.get(['lockedSites', 'unlockedExceptions']) as LocalData;
   const lockedSites = data.lockedSites || [];
-  const unlockedExceptions = data.unlockedExceptions || [];
+  // FIX: Ensure array
+  const unlockedExceptions = Array.isArray(data.unlockedExceptions) ? data.unlockedExceptions : [];
 
   if (!Array.isArray(lockedSites) || lockedSites.length === 0) return;
 
@@ -193,7 +198,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return true; 
   }
   
-  // HANDLE UNLOCK - Now sets Expiry Time
+  // HANDLE UNLOCK
   if (msg.type === 'UNLOCK_SITE') {
     const urlToUnlock = msg.url;
     const hostname = normalizeDomain(urlToUnlock);
@@ -206,7 +211,6 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
             if (!list.includes(hostname)) list.push(hostname);
             
-            // Set expiry for 30 minutes from now
             expiry[hostname] = Date.now() + AUTO_LOCK_TIMEOUT_MS;
 
             await chrome.storage.local.set({ 
@@ -219,6 +223,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     }
   }
 
+  // HANDLE RE-LOCK
   if (msg.type === 'RELOCK_SITE') {
     const hostname = normalizeDomain(msg.url);
     if (hostname) {
