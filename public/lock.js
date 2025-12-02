@@ -1,3 +1,4 @@
+// This runs on the lock page
 const API_BASE_URL = 'http://127.0.0.1:4000/api';
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -9,6 +10,30 @@ document.addEventListener('DOMContentLoaded', () => {
     const params = new URLSearchParams(window.location.search);
     const targetUrl = params.get('url');
     const lockId = params.get('id'); 
+
+    // NEW: Favicon Injection
+    if (targetUrl) {
+        try {
+            const domain = new URL(targetUrl).hostname;
+            // Use Google's S2 service for reliable favicons
+            const iconUrl = `https://www.google.com/s2/favicons?domain=${domain}&sz=64`;
+            
+            const img = document.createElement('img');
+            img.src = iconUrl;
+            img.style.cssText = 'display: block; margin: 0 auto 20px auto; width: 64px; height: 64px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1);';
+            
+            // Insert before the H2 title if it exists, or prepend to body
+            const title = document.querySelector('h2');
+            if (title && title.parentNode) {
+                title.parentNode.insertBefore(img, title);
+                title.innerText = `Locked: ${domain}`;
+            } else {
+                document.body.prepend(img);
+            }
+        } catch (e) {
+            console.error('Favicon load failed', e);
+        }
+    }
 
     let isRedirecting = false;
 
@@ -42,7 +67,6 @@ document.addEventListener('DOMContentLoaded', () => {
         else window.close();
     };
 
-    // Listen for remote unlocks (from Web App)
     const checkLockStatus = async () => {
         if (isRedirecting) return;
         try {
@@ -60,7 +84,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 } catch(e) {}
             }
 
-            // Redirect if lock deleted, disabled, or locally excepted
             if (!currentLock || !currentLock.is_locked || isLocallyUnlocked) {
                 console.log("Status change detected. Unlocking...");
                 finishUnlock();
@@ -99,7 +122,6 @@ document.addEventListener('DOMContentLoaded', () => {
             if (response.ok) {
                 showNotification('Unlocked! Redirecting...', false);
                 
-                // Update Server
                 if (lockId) {
                     fetch(`${API_BASE_URL}/locks/${lockId}/status`, {
                         method: 'PATCH',
