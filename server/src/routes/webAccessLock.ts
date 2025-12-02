@@ -20,57 +20,39 @@ interface TabLockRow extends RowDataPacket {
   created_at: string;
 }
 
-// GET /api/locks
 router.get('/', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const [rows] = await pool.query<TabLockRow[]>(
       'SELECT id, url, lock_name, is_locked, created_at FROM tab_locks WHERE user_id = ? ORDER BY created_at DESC', 
       [req.userId]
     );
-    
-    const locks = rows.map(row => ({
-      ...row,
-      is_locked: Boolean(row.is_locked)
-    }));
-
+    const locks = rows.map(row => ({ ...row, is_locked: Boolean(row.is_locked) }));
     res.json({ locks });
   } catch (error) {
-    console.error('List locks error:', error);
     res.status(500).json({ error: 'Failed to fetch locked sites' });
   }
 });
 
-// PATCH /api/locks/:id/status - Toggle Lock Status (Needed for Sync)
+// NEW: Toggle Status Route
 router.patch('/:id/status', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
   const { is_locked } = req.body;
-  
-  if (typeof is_locked !== 'boolean') {
-    return res.status(400).json({ error: 'is_locked must be a boolean' });
-  }
+  if (typeof is_locked !== 'boolean') return res.status(400).json({ error: 'is_locked must be a boolean' });
 
   try {
     const [result] = await pool.execute<ResultSetHeader>(
       'UPDATE tab_locks SET is_locked = ? WHERE id = ? AND user_id = ?',
       [is_locked, req.params.id, req.userId]
     );
-
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ error: 'Lock not found' });
-    }
-
+    if (result.affectedRows === 0) return res.status(404).json({ error: 'Lock not found' });
     res.json({ success: true, is_locked });
   } catch (error) {
-    console.error('Update lock status error:', error);
     res.status(500).json({ error: 'Failed to update lock status' });
   }
 });
 
-// POST /api/locks
 router.post('/', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
   const parsed = lockSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: parsed.error.issues[0].message });
-  }
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0].message });
 
   let { url, name } = parsed.data;
   url = url.replace(/^(https?:\/\/)?(www\.)?/, '').split('/')[0].toLowerCase();
@@ -83,19 +65,14 @@ router.post('/', requireAuth, async (req: AuthenticatedRequest, res: Response) =
 
     if (existing.length > 0) {
       const lock = existing[0];
-      if (lock.is_locked) {
-        return res.status(409).json({ error: 'This site is already locked.' });
-      } else {
-        await pool.execute(
-          'UPDATE tab_locks SET is_locked = true, created_at = NOW() WHERE id = ?',
-          [lock.id]
-        );
-        return res.status(200).json({ 
+      if (lock.is_locked) return res.status(409).json({ error: 'This site is already locked.' });
+      
+      await pool.execute('UPDATE tab_locks SET is_locked = true, created_at = NOW() WHERE id = ?', [lock.id]);
+      return res.status(200).json({ 
           success: true, 
-          message: 'Site re-locked successfully',
+          message: 'Site re-locked',
           lock: { id: lock.id, url, lock_name: name || url, is_locked: true, created_at: new Date().toISOString() } 
-        });
-      }
+      });
     }
 
     const [result] = await pool.execute<ResultSetHeader>(
@@ -105,39 +82,21 @@ router.post('/', requireAuth, async (req: AuthenticatedRequest, res: Response) =
     
     res.status(201).json({ 
       success: true, 
-      lock: {
-        id: result.insertId,
-        url,
-        lock_name: name || url,
-        is_locked: true,
-        created_at: new Date().toISOString()
-      }
+      lock: { id: result.insertId, url, lock_name: name || url, is_locked: true, created_at: new Date().toISOString() }
     });
 
   } catch (error: any) {
-    if (error.code === 'ER_DUP_ENTRY') {
-      return res.status(409).json({ error: 'This site is already locked' });
-    }
-    console.error('Add lock error:', error);
+    if (error.code === 'ER_DUP_ENTRY') return res.status(409).json({ error: 'This site is already locked' });
     res.status(500).json({ error: 'Failed to lock site' });
   }
 });
 
-// DELETE /api/locks/:id
 router.delete('/:id', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const [result] = await pool.execute<ResultSetHeader>(
-      'DELETE FROM tab_locks WHERE id = ? AND user_id = ?', 
-      [req.params.id, req.userId]
-    );
-
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ error: 'Lock not found' });
-    }
-
+    const [result] = await pool.execute<ResultSetHeader>('DELETE FROM tab_locks WHERE id = ? AND user_id = ?', [req.params.id, req.userId]);
+    if (result.affectedRows === 0) return res.status(404).json({ error: 'Lock not found' });
     res.json({ success: true });
   } catch (error) {
-    console.error('Delete lock error:', error);
     res.status(500).json({ error: 'Failed to remove lock' });
   }
 });
