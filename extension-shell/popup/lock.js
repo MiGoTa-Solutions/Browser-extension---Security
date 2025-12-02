@@ -7,11 +7,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const errorMsg = document.getElementById('errorMsg');
     const btn = document.getElementById('unlockBtn');
 
-    // Get URL params
+    // Get URL params to find which lock ID this is
     const params = new URLSearchParams(window.location.search);
     const targetUrl = params.get('url');
+    const lockId = params.get('id'); // <--- Vital for updating server
 
-    // --- UI Helper: Custom Notification ---
+    // --- UI Helper ---
     function showNotification(message, isError = false) {
         let toast = document.getElementById('lock-toast');
         if (!toast) {
@@ -25,45 +26,37 @@ document.addEventListener('DOMContentLoaded', () => {
             `;
             document.body.appendChild(toast);
         }
-        
         toast.textContent = message;
         toast.style.backgroundColor = isError ? '#ef4444' : '#10b981';
         toast.style.transform = 'translateX(-50%) translateY(0)';
         toast.style.opacity = '1';
-        
         setTimeout(() => {
             toast.style.opacity = '0';
             toast.style.transform = 'translateX(-50%) translateY(-20px)';
         }, 3000);
     }
 
-    // Helper to safely redirect/close
     const finishUnlock = () => {
-        if (targetUrl) {
-            window.location.href = targetUrl;
-        } else {
-            window.close();
-        }
+        if (targetUrl) window.location.href = targetUrl;
+        else window.close();
     };
 
     form.addEventListener('submit', async (e) => {
         e.preventDefault();
         const pin = input.value;
-        
         btn.textContent = 'Verifying...';
         btn.disabled = true;
         errorMsg.style.display = 'none';
 
         try {
             const { auth_token } = await chrome.storage.local.get('auth_token');
-            
             if (!auth_token) {
                 showNotification('Please log in to SecureShield extension.', true);
-                btn.textContent = 'Unlock Access';
                 btn.disabled = false;
                 return;
             }
 
+            // 1. Verify PIN
             const response = await fetch(`${API_BASE_URL}/auth/verify-pin`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${auth_token}` },
@@ -71,41 +64,27 @@ document.addEventListener('DOMContentLoaded', () => {
             });
 
             if (response.ok) {
-                showNotification('Unlocked! Redirecting...', false);
+                showNotification('Unlocked! Updating status...', false);
                 
-                // FIX: Robust Message Handling with Timeout Race
-                const unlockMessagePromise = new Promise((resolve) => {
+                // 2. NEW: Update Server DB to mark as Unlocked
+                if (lockId) {
                     try {
-                        chrome.runtime.sendMessage({ type: 'UNLOCK_SITE', url: targetUrl }, (resp) => {
-                            // Check if background script didn't respond or crashed
-                            if (chrome.runtime.lastError) {
-                                console.warn("Background script unreachable:", chrome.runtime.lastError);
-                                resolve(false); 
-                            } else {
-                                resolve(resp?.success);
-                            }
+                        await fetch(`${API_BASE_URL}/locks/${lockId}/status`, {
+                            method: 'PATCH',
+                            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${auth_token}` },
+                            body: JSON.stringify({ is_locked: false })
                         });
-                    } catch (e) {
-                        resolve(false);
+                    } catch (err) {
+                        console.error("Failed to update server status:", err);
                     }
+                }
+
+                // 3. Notify Background to clear immediate blocks
+                chrome.runtime.sendMessage({ type: 'UNLOCK_SITE', url: targetUrl });
+                chrome.runtime.sendMessage({ type: 'SYNC_LOCKS' }, () => {
+                    setTimeout(finishUnlock, 500); 
                 });
-
-                // Create a 2-second timeout promise
-                const timeoutPromise = new Promise((resolve) => {
-                    setTimeout(() => {
-                        console.warn("Unlock response timed out.");
-                        resolve(false);
-                    }, 2000);
-                });
-
-                // Wait for whichever comes first: Background Success OR Timeout
-                await Promise.race([unlockMessagePromise, timeoutPromise]);
-                
-                // Force reload regardless of success/fail to prevent hanging
-                finishUnlock();
-
             } else {
-                // Wrong PIN
                 errorMsg.style.display = 'block';
                 input.value = '';
                 btn.textContent = 'Unlock Access';
@@ -113,7 +92,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         } catch (error) {
             console.error(error);
-            showNotification('Connection error. Is the server running?', true);
+            showNotification('Connection error.', true);
             btn.textContent = 'Unlock Access';
             btn.disabled = false;
         }

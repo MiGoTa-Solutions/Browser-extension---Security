@@ -28,7 +28,6 @@ router.get('/', requireAuth, async (req: AuthenticatedRequest, res: Response) =>
       [req.userId]
     );
     
-    // Convert MySQL 1/0 to boolean for frontend
     const locks = rows.map(row => ({
       ...row,
       is_locked: Boolean(row.is_locked)
@@ -41,6 +40,31 @@ router.get('/', requireAuth, async (req: AuthenticatedRequest, res: Response) =>
   }
 });
 
+// PATCH /api/locks/:id/status - Toggle Lock Status (NEW ROUTE)
+router.patch('/:id/status', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  const { is_locked } = req.body;
+  
+  if (typeof is_locked !== 'boolean') {
+    return res.status(400).json({ error: 'is_locked must be a boolean' });
+  }
+
+  try {
+    const [result] = await pool.execute<ResultSetHeader>(
+      'UPDATE tab_locks SET is_locked = ? WHERE id = ? AND user_id = ?',
+      [is_locked, req.params.id, req.userId]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Lock not found' });
+    }
+
+    res.json({ success: true, is_locked });
+  } catch (error) {
+    console.error('Update lock status error:', error);
+    res.status(500).json({ error: 'Failed to update lock status' });
+  }
+});
+
 // POST /api/locks - Add a new lock
 router.post('/', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
   const parsed = lockSchema.safeParse(req.body);
@@ -49,11 +73,9 @@ router.post('/', requireAuth, async (req: AuthenticatedRequest, res: Response) =
   }
 
   let { url, name } = parsed.data;
-  // Normalize URL: remove http://, www., and paths to match extension logic
   url = url.replace(/^(https?:\/\/)?(www\.)?/, '').split('/')[0].toLowerCase();
 
   try {
-    // [FIX] Check for existing lock to prevent duplicates
     const [existing] = await pool.query<TabLockRow[]>(
       'SELECT id, is_locked FROM tab_locks WHERE user_id = ? AND url = ?',
       [req.userId, url]
@@ -63,10 +85,8 @@ router.post('/', requireAuth, async (req: AuthenticatedRequest, res: Response) =
       const lock = existing[0];
       
       if (lock.is_locked) {
-        // Truly duplicate: Already exists and is locked
         return res.status(409).json({ error: 'This site is already locked.' });
       } else {
-        // Exists but unlocked: Re-lock it
         await pool.execute(
           'UPDATE tab_locks SET is_locked = true, created_at = NOW() WHERE id = ?',
           [lock.id]
@@ -86,7 +106,6 @@ router.post('/', requireAuth, async (req: AuthenticatedRequest, res: Response) =
       }
     }
 
-    // If no existing row, Insert new lock
     const [result] = await pool.execute<ResultSetHeader>(
       'INSERT INTO tab_locks (user_id, url, lock_name, is_locked) VALUES (?, ?, ?, true)',
       [req.userId, url, name || url]
@@ -104,7 +123,6 @@ router.post('/', requireAuth, async (req: AuthenticatedRequest, res: Response) =
     });
 
   } catch (error: any) {
-    // Fallback for race conditions caught by DB constraint
     if (error.code === 'ER_DUP_ENTRY') {
       return res.status(409).json({ error: 'This site is already locked' });
     }

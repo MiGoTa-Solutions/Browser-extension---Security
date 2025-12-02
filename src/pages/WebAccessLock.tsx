@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Lock, Trash2, Plus, Globe, Sparkles, RefreshCw } from 'lucide-react'; // Added RefreshCw
+import { Lock, Unlock, Trash2, Plus, Sparkles, RefreshCw } from 'lucide-react'; 
 import { useAuth } from '../context/AuthContext';
 import { webAccessLockApi } from '../services/api';
 import { TabLock } from '../types';
@@ -8,18 +8,17 @@ import { Input } from '../components/Input';
 import { AlertDialog } from '../components/AlertDialog';
 import { notifyExtensionSync } from '../utils/extensionApi';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || '/api';
+const API_BASE_URL = import.meta.env.VITE_API_URL || '/api'; 
 
 export function WebAccessLock() {
   const { token } = useAuth();
   const [locks, setLocks] = useState<TabLock[]>([]);
   const [loading, setLoading] = useState(true);
-  const [syncing, setSyncing] = useState(false); // New state for manual sync
+  const [syncing, setSyncing] = useState(false);
   const [newUrl, setNewUrl] = useState('');
   const [newName, setNewName] = useState('');
   const [submitting, setSubmitting] = useState(false);
   
-  // AI Suggestions State
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [loadingSuggestions, setLoadingSuggestions] = useState(false);
@@ -65,17 +64,39 @@ export function WebAccessLock() {
     }
   };
 
-  // FIX: Manual Sync Function
   const handleManualSync = async () => {
     if (!token) return;
     setSyncing(true);
     try {
-      // 1. Fetch latest data
       await fetchLocks();
-      // 2. Force extension to update immediately
       await notifyExtensionSync();
     } finally {
-      setTimeout(() => setSyncing(false), 500); // Visual delay
+      setTimeout(() => setSyncing(false), 500);
+    }
+  };
+
+  // FIX: Handle toggle logic
+  const handleToggleLock = async (id: number, currentState: boolean) => {
+    if (!token) return;
+    // Optimistic update for immediate UI feedback
+    setLocks(prev => prev.map(l => l.id === id ? { ...l, is_locked: !currentState } : l));
+    try {
+        await webAccessLockApi.toggleLock(token, id, !currentState);
+        notifyExtensionSync(); // Tell extension to update
+        setAlertDialog({
+          isOpen: true,
+          type: 'success',
+          title: 'Success!',
+          message: currentState ? 'Website unlocked successfully.' : 'Website locked successfully.'
+        });
+    } catch (err) {
+        setAlertDialog({
+          isOpen: true,
+          type: 'error',
+          title: 'Failed to Update',
+          message: 'Unable to update lock status. Please try again.'
+        });
+        fetchLocks(); // Revert on error
     }
   };
 
@@ -88,9 +109,7 @@ export function WebAccessLock() {
       setNewName('');
       setSuggestions(prev => prev.filter(s => s !== url));
       await fetchLocks();
-      notifyExtensionSync(); // Triggers immediate sync in background
-      
-      // Show success alert
+      notifyExtensionSync();
       setAlertDialog({
         isOpen: true,
         type: 'success',
@@ -102,7 +121,7 @@ export function WebAccessLock() {
         isOpen: true,
         type: 'error',
         title: 'Failed to Add Lock',
-        message: 'Unable to lock the website. Please try again.'
+        message: 'Unable to lock the website. Site might already be locked.'
       });
     } finally {
       setSubmitting(false);
@@ -123,20 +142,19 @@ export function WebAccessLock() {
       await webAccessLockApi.delete(token, deleteConfirm.lockId);
       await fetchLocks();
       notifyExtensionSync();
-      
       setAlertDialog({
         isOpen: true,
         type: 'success',
-        title: 'Unlocked!',
-        message: 'The website has been unlocked successfully.'
+        title: 'Deleted!',
+        message: 'The lock rule has been removed successfully.'
       });
     } catch (err) {
       console.error(err);
       setAlertDialog({
         isOpen: true,
         type: 'error',
-        title: 'Failed to Unlock',
-        message: 'Unable to unlock the website. Please try again.'
+        title: 'Failed to Delete',
+        message: 'Unable to delete the lock rule. Please try again.'
       });
     } finally {
       setDeleteConfirm({ isOpen: false, lockId: null });
@@ -166,6 +184,7 @@ export function WebAccessLock() {
     const prompt = `Analyze this frequency data: ${JSON.stringify(websiteFrequency)}. Suggest 3 distracting domains to lock. Return ONLY a JSON array of strings. Example: ["youtube.com"]`;
 
     try {
+      // Use secure backend proxy instead of direct API call
       const response = await fetch(`${API_BASE_URL}/gemini/analyze`, {
         method: 'POST',
         headers: { 
@@ -202,7 +221,6 @@ export function WebAccessLock() {
             Block distracting or sensitive websites. Requires Master PIN to access.
           </p>
         </div>
-        {/* FIX: Added Sync Button */}
         <button 
           onClick={handleManualSync} 
           disabled={syncing}
@@ -259,10 +277,24 @@ export function WebAccessLock() {
             {locks.map(l => (
               <div key={l.id} className="p-4 flex justify-between items-center hover:bg-gray-50">
                 <div className="flex gap-3 items-center">
-                  <div className="p-2 bg-red-100 rounded-lg"><Globe className="w-5 h-5 text-red-600"/></div>
-                  <div><h3 className="font-medium">{l.lock_name || l.url}</h3><p className="text-sm text-gray-500">{l.url}</p></div>
+                  <div className={`p-2 rounded-lg ${l.is_locked ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'}`}>
+                    {l.is_locked ? <Lock className="w-5 h-5"/> : <Unlock className="w-5 h-5"/>}
+                  </div>
+                  <div>
+                    <h3 className={`font-medium ${!l.is_locked && 'text-gray-400 line-through'}`}>{l.lock_name || l.url}</h3>
+                    <p className="text-sm text-gray-500">{l.url}</p>
+                  </div>
                 </div>
-                <button onClick={() => handleDelete(l.id)} className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg"><Trash2 className="w-5 h-5"/></button>
+                <div className="flex items-center gap-2">
+                    {/* Toggle Button */}
+                    <button onClick={() => handleToggleLock(l.id, l.is_locked)} className="text-sm font-medium text-blue-600 hover:underline px-2">
+                        {l.is_locked ? 'Unlock' : 'Re-lock'}
+                    </button>
+                    {/* Delete Button */}
+                    <button onClick={() => handleDelete(l.id)} className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg">
+                        <Trash2 className="w-5 h-5"/>
+                    </button>
+                </div>
               </div>
             ))}
             {!loading && locks.length === 0 && <div className="p-8 text-center text-gray-400">No locks active.</div>}
@@ -284,10 +316,10 @@ export function WebAccessLock() {
         isOpen={deleteConfirm.isOpen}
         onClose={() => setDeleteConfirm({ isOpen: false, lockId: null })}
         onConfirm={confirmDelete}
-        title="Unlock Website?"
-        message="Are you sure you want to unlock this website? It will become accessible again."
+        title="Delete Lock Rule?"
+        message="Are you sure you want to delete this lock rule entirely? This action cannot be undone."
         type="confirm"
-        confirmText="Yes, Unlock"
+        confirmText="Yes, Delete"
         cancelText="Cancel"
       />
     </div>
