@@ -1,10 +1,12 @@
 import { useState, useEffect } from 'react';
-import { Lock, Unlock, Trash2, Plus, Globe, Sparkles, RefreshCw } from 'lucide-react'; 
+import { Lock, Unlock, Trash2, Plus, Sparkles, RefreshCw } from 'lucide-react'; 
 import { useAuth } from '../context/AuthContext';
 import { webAccessLockApi } from '../services/api';
 import { TabLock } from '../types';
 import { Button } from '../components/Button';
 import { Input } from '../components/Input';
+import { Toast } from '../components/Toast';
+import { AlertDialog } from '../components/AlertDialog';
 import { notifyExtensionSync } from '../utils/extensionApi';
 
 const GEMINI_API_KEY = 'AIzaSyDvHWTKIxHxGo1IWwEPZNqzvnBYuzUFVDc'; 
@@ -22,6 +24,9 @@ export function WebAccessLock() {
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [loadingSuggestions, setLoadingSuggestions] = useState(false);
   const [suggestionError, setSuggestionError] = useState<string | null>(null);
+
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'warning' | 'info' } | null>(null);
+  const [deleteDialog, setDeleteDialog] = useState<{ isOpen: boolean; lockId: number | null }>({ isOpen: false, lockId: null });
 
   useEffect(() => {
     if (token) fetchLocks();
@@ -56,9 +61,13 @@ export function WebAccessLock() {
     setLocks(prev => prev.map(l => l.id === id ? { ...l, is_locked: !currentState } : l));
     try {
         await webAccessLockApi.toggleLock(token, id, !currentState);
-        notifyExtensionSync(); 
+        notifyExtensionSync();
+        setToast({ 
+          message: currentState ? '🔓 Website unlocked successfully!' : '🔒 Website locked successfully!', 
+          type: 'success' 
+        });
     } catch (err) {
-        alert("Failed to update lock status");
+        setToast({ message: '❌ Failed to update lock status. Please try again.', type: 'error' });
         fetchLocks(); 
     }
   };
@@ -73,21 +82,31 @@ export function WebAccessLock() {
       setSuggestions(prev => prev.filter(s => s !== url));
       await fetchLocks();
       notifyExtensionSync();
+      setToast({ message: `✅ ${url} has been locked successfully!`, type: 'success' });
     } catch (err) {
-      alert('Failed to add lock.');
+      setToast({ message: '❌ Failed to add lock. Site might already be locked.', type: 'error' });
     } finally {
       setSubmitting(false);
     }
   };
 
   const handleDelete = async (id: number) => {
-    if (!token || !confirm('Delete this rule entirely?')) return;
+    if (!token) return;
+    setDeleteDialog({ isOpen: true, lockId: id });
+  };
+
+  const confirmDelete = async () => {
+    if (!token || !deleteDialog.lockId) return;
     try {
-      await webAccessLockApi.delete(token, id);
+      await webAccessLockApi.delete(token, deleteDialog.lockId);
       await fetchLocks();
       notifyExtensionSync();
+      setToast({ message: '🗑️ Lock rule deleted successfully!', type: 'success' });
     } catch (err) {
       console.error(err);
+      setToast({ message: '❌ Failed to delete lock rule.', type: 'error' });
+    } finally {
+      setDeleteDialog({ isOpen: false, lockId: null });
     }
   };
 
@@ -233,6 +252,27 @@ export function WebAccessLock() {
             {!loading && locks.length === 0 && <div className="p-8 text-center text-gray-400">No locks active.</div>}
         </div>
       </div>
+
+      {/* Toast Notification */}
+      {toast && (
+        <Toast
+          message={toast.message}
+          type={toast.type}
+          onClose={() => setToast(null)}
+        />
+      )}
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog
+        isOpen={deleteDialog.isOpen}
+        onClose={() => setDeleteDialog({ isOpen: false, lockId: null })}
+        onConfirm={confirmDelete}
+        title="Delete Lock Rule?"
+        message="Are you sure you want to permanently delete this lock rule? This action cannot be undone."
+        type="confirm"
+        confirmText="Yes, Delete"
+        cancelText="Cancel"
+      />
     </div>
   );
 }
