@@ -18,12 +18,13 @@ export default defineConfig({
     rollupOptions: {
       input: {
         main: resolve(__dirname, 'index.html'),
-        lock: resolve(__dirname, 'lock.html'), // FIX: Points to root lock.html
+        lock: resolve(__dirname, 'lock.html'), // <--- CRITICAL: This was missing
         background: resolve(__dirname, 'src/extension/background.ts'),
         content: resolve(__dirname, 'src/extension/content.ts'),
       },
       output: {
         entryFileNames: (chunkInfo) => {
+          // Force consistent filenames for extension scripts
           if (['background', 'content', 'lock'].includes(chunkInfo.name)) {
             return '[name].js';
           }
