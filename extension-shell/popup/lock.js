@@ -1,4 +1,3 @@
-// This runs on the lock page
 const API_BASE_URL = 'http://127.0.0.1:4000/api';
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -7,12 +6,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const errorMsg = document.getElementById('errorMsg');
     const btn = document.getElementById('unlockBtn');
 
-    // Get URL params to find which lock ID this is
     const params = new URLSearchParams(window.location.search);
     const targetUrl = params.get('url');
-    const lockId = params.get('id'); // <--- Vital for updating server
+    const lockId = params.get('id');
 
-    // --- UI Helper ---
     function showNotification(message, isError = false) {
         let toast = document.getElementById('lock-toast');
         if (!toast) {
@@ -56,7 +53,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
 
-            // 1. Verify PIN
             const response = await fetch(`${API_BASE_URL}/auth/verify-pin`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${auth_token}` },
@@ -66,7 +62,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (response.ok) {
                 showNotification('Unlocked! Updating status...', false);
                 
-                // 2. NEW: Update Server DB to mark as Unlocked
+                // UPDATE SERVER STATUS
                 if (lockId) {
                     try {
                         await fetch(`${API_BASE_URL}/locks/${lockId}/status`, {
@@ -79,7 +75,6 @@ document.addEventListener('DOMContentLoaded', () => {
                     }
                 }
 
-                // 3. Notify Background to clear immediate blocks
                 chrome.runtime.sendMessage({ type: 'UNLOCK_SITE', url: targetUrl });
                 chrome.runtime.sendMessage({ type: 'SYNC_LOCKS' }, () => {
                     setTimeout(finishUnlock, 500); 

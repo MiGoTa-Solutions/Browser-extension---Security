@@ -40,7 +40,7 @@ router.get('/', requireAuth, async (req: AuthenticatedRequest, res: Response) =>
   }
 });
 
-// PATCH /api/locks/:id/status - Toggle Lock Status (NEW ROUTE)
+// PATCH /api/locks/:id/status - Toggle Lock Status
 router.patch('/:id/status', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
   const { is_locked } = req.body;
   

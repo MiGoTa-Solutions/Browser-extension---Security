@@ -76,7 +76,6 @@ export const authApi = {
     request<{ success: boolean }>('/auth/verify-pin', { method: 'POST', token, data }),
 };
 
-// ADDED: toggleLock method
 export const webAccessLockApi = {
   list: (token: string) => 
     request<{ locks: any[] }>('/locks', { token }),
