@@ -37,158 +37,83 @@ const SceneContext = createContext<SceneContextType>({
 function TacticalShield() {
   const groupRef = useRef<THREE.Group>(null);
   const sweepRef = useRef<THREE.Mesh>(null);
+  const coreRef = useRef<THREE.Mesh>(null);
   const { cursorTarget, isInputFocused } = useContext(SceneContext);
 
-  // Pre-compute marker positions around perimeter
-  const markerPositions = useRef([
-    ...Array.from({ length: 8 }, (_, i) => {
-      const radius = 2.1;
-      const count = 8;
-      const angle = (i / count) * Math.PI * 2 + Math.PI / 8;
-      return {
-        x: Math.cos(angle) * radius,
-        y: Math.sin(angle) * radius * 0.85,
-        angle,
-      };
-    })
-  ]);
+  const ringLayers = [
+    { r: 3.0, color: '#00eaff', emission: 1.2, width: 0.14 },
+    { r: 2.4, color: '#6366f1', emission: 1.3, width: 0.14 },
+    { r: 1.8, color: '#06d6a0', emission: 1.4, width: 0.16 },
+    { r: 1.2, color: '#0891b2', emission: 1.8, width: 0.2 },
+  ];
 
   useFrame((state) => {
-    if (!groupRef.current) return;
-
+    if (!groupRef.current || !coreRef.current) return;
     const t = state.clock.elapsedTime;
 
-    // Subtle sway as if the whole shield is hanging in a control room
-    groupRef.current.rotation.z = Math.sin(t * 0.2) * 0.08;
-
-    // Tilt slightly with mouse (feels like “leaning” toward cursor)
-    const tiltX = -cursorTarget.y * 0.2;
-    const tiltY = cursorTarget.x * 0.25;
-    groupRef.current.rotation.x = lerp(
-      groupRef.current.rotation.x,
-      tiltX,
-      0.08,
-    );
+    groupRef.current.rotation.z = Math.sin(t * 0.15) * 0.04;
     groupRef.current.rotation.y = lerp(
       groupRef.current.rotation.y,
-      tiltY,
-      0.08,
+      cursorTarget.x * 0.18,
+      0.06
     );
 
-    // Rotate scan sweep constantly
-    if (sweepRef.current) {
-      sweepRef.current.rotation.z = -t * 0.9;
-    }
+    // Encryption heartbeat (moves energy)
+    const scalePulse = 1 + Math.sin(t * 3.5) * 0.045;
+    coreRef.current.scale.set(scalePulse, scalePulse, scalePulse);
 
-    // Slight global scale bump when input focused (user = “under active verification”)
-    const baseScale = 1;
-    const focusScale = isInputFocused ? 1.08 : 1;
-    const pulse = 0.98 + Math.sin(t * 1.3) * 0.02;
-    const finalScale = baseScale * focusScale * pulse;
-    groupRef.current.scale.set(finalScale, finalScale, finalScale);
+    // Active verification — expands shield slightly
+    const focusGrow = isInputFocused ? 1.12 : 1;
+    groupRef.current.scale.set(1.15 * focusGrow, 1.15 * focusGrow, 1.15 * focusGrow);
+
+    if (sweepRef.current) {
+      sweepRef.current.rotation.z -= 0.015;
+    }
   });
 
   return (
-    <group ref={groupRef} position={[-2.8, 0.1, 0]}>
-      {/* OUTER RING – PERIMETER FIREWALL */}
-      <mesh>
-        <cylinderGeometry args={[2.4, 2.4, 0.02, 8]} />
+    <group ref={groupRef} position={[-3.6, 0.2, 0]}>
+      {/* Outer Security Layers */}
+      {ringLayers.map((l, i) => (
+        <mesh key={i} position={[0, 0, 0.02 * i]}>
+          <ringGeometry args={[l.r - l.width, l.r, 64]} />
+          <meshStandardMaterial
+            color={l.color}
+            emissive={l.color}
+            emissiveIntensity={l.emission}
+            metalness={1}
+            roughness={0.1}
+            transparent
+            opacity={0.88 - i * 0.1}
+            side={THREE.DoubleSide}
+          />
+        </mesh>
+      ))}
+
+      {/* Encryption Core */}
+      <mesh ref={coreRef} position={[0, 0, 0.2]}>
+        <sphereGeometry args={[0.9, 48, 48]} />
         <meshStandardMaterial
-          color="#0f172a"
-          emissive="#22d3ee"
-          emissiveIntensity={0.5}
-          metalness={0.7}
-          roughness={0.2}
-          transparent
-          opacity={0.85}
+          color="#0ea5e9"
+          emissive="#38bdf8"
+          emissiveIntensity={2.5}
+          metalness={1}
+          roughness={0.3}
         />
       </mesh>
 
-      {/* MID RING – ACTIVE DEFENSE */}
-      <mesh>
-        <cylinderGeometry args={[2.0, 2.0, 0.02, 8]} />
+      {/* Sweep Scanner */}
+      <mesh ref={sweepRef} position={[0, 0, 0.25]}>
+        <ringGeometry args={[1.15, 1.75, 64, 1, 0, Math.PI / 1.3]} />
         <meshStandardMaterial
-          color="#020617"
-          emissive="#6366f1"
-          emissiveIntensity={0.8}
-          metalness={0.8}
-          roughness={0.15}
-          transparent
-          opacity={0.9}
-        />
-      </mesh>
-
-      {/* INNER RING – CORE ENCRYPTION */}
-      <mesh>
-        <cylinderGeometry args={[1.4, 1.4, 0.04, 8]} />
-        <meshStandardMaterial
-          color="#020617"
-          emissive="#22c55e"
-          emissiveIntensity={0.9}
-          metalness={0.9}
-          roughness={0.2}
-        />
-      </mesh>
-
-      {/* CORE PLATE */}
-      <mesh position={[0, 0, 0.04]}>
-        <circleGeometry args={[0.85, 32]} />
-        <meshStandardMaterial
-          color="#020617"
-          emissive="#0ea5e9"
-          emissiveIntensity={0.8}
-          metalness={0.9}
-          roughness={0.25}
-        />
-      </mesh>
-
-      {/* SCAN SWEEP ARC */}
-      <mesh ref={sweepRef} position={[0, 0, 0.06]}>
-        {/* partial ring (1/3 of circle) */}
-        <ringGeometry args={[1.45, 1.9, 64, 1, 0, Math.PI / 1.3]} />
-        <meshBasicMaterial
           color="#22d3ee"
           transparent
-          opacity={0.75}
+          opacity={0.9}
+          emissive="#22d3ee"
+          emissiveIntensity={2}
           side={THREE.DoubleSide}
         />
       </mesh>
-
-      {/* PERIMETER HIT MARKERS (threat contact points) */}
-      {markerPositions.current.map((m, idx) => (
-        <mesh
-          key={idx}
-          position={[m.x, m.y, 0.08]}
-          rotation={[0, 0, m.angle]}
-        >
-          <boxGeometry args={[0.22, 0.06, 0.06]} />
-          <meshStandardMaterial
-            color={idx % 3 === 0 ? '#f97316' : '#a855f7'}
-            emissive={idx % 3 === 0 ? '#f97316' : '#a855f7'}
-            emissiveIntensity={1.1}
-            transparent
-            opacity={0.95}
-          />
-        </mesh>
-      ))}
-
-      {/* INNER GLYPHS – orbiting “cipher plates” */}
-      {Array.from({ length: 3 }).map((_, i) => (
-        <mesh
-          key={i}
-          position={[0, 0, 0.02 + i * 0.01]}
-          rotation={[0, 0, (Math.PI / 6) * i]}
-        >
-          <ringGeometry args={[0.5 + i * 0.18, 0.55 + i * 0.19, 32]} />
-          <meshStandardMaterial
-            color="#38bdf8"
-            emissive="#38bdf8"
-            emissiveIntensity={0.5}
-            transparent
-            opacity={0.6 - i * 0.1}
-          />
-        </mesh>
-      ))}
     </group>
   );
 }
