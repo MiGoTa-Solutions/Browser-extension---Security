@@ -20,6 +20,7 @@ export function WebAccessLock() {
 
   const fetchLocks = async () => {
     if (!token) return;
+    setLoading(true);
     try {
       const data = await webAccessLockApi.list(token);
       setLocks(data.locks);
@@ -111,7 +112,12 @@ export function WebAccessLock() {
             </div>
             
             <div className="divide-y divide-slate-200 dark:divide-white/5 overflow-y-auto max-h-[600px]">
-              {locks.length === 0 ? (
+              {loading ? (
+                <div className="p-12 text-center text-slate-400 flex flex-col items-center">
+                  <div className="w-12 h-12 border-4 border-slate-300 border-t-blue-500 rounded-full animate-spin mb-4"></div>
+                  <p>Loading policies...</p>
+                </div>
+              ) : locks.length === 0 ? (
                  <div className="p-12 text-center text-slate-400 flex flex-col items-center">
                     <Sparkles className="w-12 h-12 mb-4 text-slate-600 opacity-50" />
                     <p>No restrictions active. System is open.</p>

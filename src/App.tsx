@@ -8,7 +8,8 @@ import { ThreatQuarantine } from './pages/Quarantine';
 import { DOMContentInspection } from './pages/DOMInspector';
 import { CookieSecurityAudit } from './pages/CookieAudit';
 import { WebAccessLock } from './pages/WebAccessLock';
-import { AuthPage } from './pages/Auth';
+import { Login } from './pages/Login';
+import { Register } from './pages/Register';
 import { cn } from './utils/cn';
 
 function ProtectedRoute({ children }: { children: JSX.Element }) {
@@ -23,7 +24,7 @@ function ProtectedRoute({ children }: { children: JSX.Element }) {
   }
 
   if (!user) {
-    return <Navigate to="/auth" replace />;
+    return <Navigate to="/login" replace />;
   }
 
   return children;
@@ -33,42 +34,41 @@ function App() {
   const { user, logout } = useAuth();
   return (
     <Router>
-      <div className="min-h-screen bg-gradient-to-br from-gray-50 via-blue-50/20 to-indigo-50/20">
-        <div className="max-w-6xl mx-auto">
-          {user && (
-            <header className="bg-white/95 backdrop-blur-md shadow-lg border-b border-gray-100">
-              <div className="px-6 py-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center space-x-3">
-                    <img src="/icons/icon128.png" alt="SecureShield Logo" className="w-8 h-8 rounded-lg" />
-                    <div>
-                      <h1 className="text-xl font-bold text-gray-900">SecureShield</h1>
-                      <p className="text-sm text-gray-600">Browser Security Suite</p>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-sm font-semibold text-gray-800">{user.email}</p>
-                    <Button size="sm" variant="secondary" className="mt-1" onClick={logout}>
-                      Logout
-                    </Button>
+      <div className="fixed inset-0 w-screen h-screen flex flex-col bg-gradient-to-br from-gray-50 via-blue-50/20 to-indigo-50/20 overflow-hidden">
+        {user && (
+          <header className="bg-white/95 backdrop-blur-md shadow-lg border-b border-gray-100 flex-shrink-0">
+            <div className="px-4 sm:px-6 py-3 sm:py-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-2 sm:space-x-3">
+                  <img src="/icons/icon128.png" alt="SecureShield Logo" className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg" />
+                  <div>
+                    <h1 className="text-base sm:text-xl font-bold text-gray-900">SecureShield</h1>
+                    <p className="text-xs sm:text-sm text-gray-600 hidden sm:block">Browser Security Suite</p>
                   </div>
                 </div>
+                <div className="text-right">
+                  <p className="text-xs sm:text-sm font-semibold text-gray-800 truncate max-w-[150px] sm:max-w-none">{user.email}</p>
+                  <Button size="sm" variant="secondary" className="mt-1 text-xs sm:text-sm" onClick={logout}>
+                    Logout
+                  </Button>
+                </div>
               </div>
-            </header>
+            </div>
+          </header>
+        )}
+
+        <div className={cn('flex-1 flex overflow-hidden', user ? 'flex-col md:flex-row' : '')}>
+          {user && (
+            <aside className="w-full md:w-64 bg-white/95 backdrop-blur-md border-b md:border-b-0 md:border-r border-gray-100 shadow-sm flex-shrink-0 overflow-y-auto">
+              <Navigation />
+            </aside>
           )}
 
-          <div className={cn('min-h-screen', user ? 'flex flex-col md:flex-row' : '')}>
-            {user && (
-              <aside className="md:w-64 bg-white/95 backdrop-blur-md border-b border-gray-100 md:border-b-0 md:border-r shadow-sm">
-                <Navigation />
-              </aside>
-            )}
-
-            <main className="flex-1 px-4 py-6 md:px-8 bg-mesh-gradient">
+          <main className="flex-1 overflow-y-auto px-4 py-4 sm:py-6 md:px-8 bg-mesh-gradient">
               <Routes>
-                {/* Default route now points to /detect since WebAccessLock module removed */}
-                <Route path="/" element={<Navigate to={user ? '/detect' : '/auth'} replace />} />
-                <Route path="/auth" element={user ? <Navigate to="/detect" replace /> : <AuthPage />} />
+                <Route path="/" element={<Navigate to={user ? '/detect' : '/login'} replace />} />
+                <Route path="/login" element={user ? <Navigate to="/detect" replace /> : <Login />} />
+                <Route path="/register" element={user ? <Navigate to="/detect" replace /> : <Register />} />
                 <Route
                   path="/wal"
                   element={
@@ -109,10 +109,13 @@ function App() {
                     </ProtectedRoute>
                   }
                 />
+                {/* Redirect old /auth route to /login */}
+                <Route path="/auth" element={<Navigate to="/login" replace />} />
+                {/* Catch-all: redirect unknown routes */}
+                <Route path="*" element={<Navigate to={user ? '/detect' : '/login'} replace />} />
               </Routes>
             </main>
           </div>
-        </div>
       </div>
     </Router>
   );

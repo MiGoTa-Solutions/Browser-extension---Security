@@ -1,0 +1,256 @@
+import React, { useEffect, useRef, useState } from 'react';
+import { useNavigate, Link } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
+import * as THREE from 'three';
+import { QuantumLock } from '../components/three/QuantumLock';
+import { CyberGrid } from '../components/three/CyberGrid';
+import { DataOrbit } from '../components/three/DataOrbit';
+import { Lock, Mail, ArrowRight, ShieldCheck, Eye } from 'lucide-react';
+import { clsx } from 'clsx';
+
+export function Login() {
+  const navigate = useNavigate();
+  const { login } = useAuth();
+  
+  // Form State
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [isFocus, setIsFocus] = useState(false);
+
+  // Three.js Refs
+  const mountRef = useRef<HTMLDivElement>(null);
+  const lockRef = useRef<QuantumLock | null>(null);
+
+  // --- Three.js Initialization ---
+  useEffect(() => {
+    if (!mountRef.current) return;
+
+    // Scene Setup
+    const scene = new THREE.Scene();
+    // Add slight fog for depth
+    scene.fog = new THREE.FogExp2(0x050a14, 0.03);
+
+    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 100);
+    const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(window.devicePixelRatio);
+    mountRef.current.appendChild(renderer.domElement);
+
+    // Lighting
+    const ambientLight = new THREE.AmbientLight(0x404040, 2);
+    scene.add(ambientLight);
+    const pointLight = new THREE.PointLight(0x00f3ff, 2, 50);
+    pointLight.position.set(5, 5, 5);
+    scene.add(pointLight);
+
+    // Components
+    const quantumLock = new QuantumLock();
+    lockRef.current = quantumLock;
+    scene.add(quantumLock.mesh);
+
+    const grid = new CyberGrid();
+    scene.add(grid.mesh);
+
+    const orbits = new DataOrbit();
+    scene.add(orbits.mesh);
+
+    camera.position.z = 6;
+    camera.position.y = 1;
+    camera.lookAt(0,0,0);
+
+    // Animation Loop
+    const clock = new THREE.Clock();
+    let animationId: number;
+
+    const animate = () => {
+      animationId = requestAnimationFrame(animate);
+      const time = clock.getElapsedTime();
+      
+      // Speed up rotation if loading
+      const speed = isLoading ? 5 : 1;
+      
+      quantumLock.animate(time, speed);
+      grid.animate(time);
+      orbits.animate(time);
+
+      renderer.render(scene, camera);
+    };
+    animate();
+
+    // Handle Resize
+    const handleResize = () => {
+      if (!mountRef.current) return;
+      const width = mountRef.current.clientWidth;
+      const height = mountRef.current.clientHeight;
+      renderer.setSize(width, height);
+      camera.aspect = width / height;
+      camera.updateProjectionMatrix();
+    };
+    window.addEventListener('resize', handleResize);
+
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      cancelAnimationFrame(animationId);
+      renderer.dispose();
+      scene.clear();
+      if (mountRef.current) mountRef.current.innerHTML = '';
+    };
+  }, [isLoading]);
+
+  // --- Interactions ---
+  const handleFocus = () => {
+    setIsFocus(true);
+    lockRef.current?.setFocus(true);
+  };
+  
+  const handleBlur = () => {
+    setIsFocus(false);
+    lockRef.current?.setFocus(false);
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      await login(email, password);
+      lockRef.current?.setSuccess();
+      // Delay navigation slightly to show success state
+      setTimeout(() => navigate('/'), 800);
+    } catch (err) {
+      setError('Authentication Failed: Access Denied');
+      setIsLoading(false);
+      lockRef.current?.setError();
+      
+      // Shake Animation on Form
+      const form = document.getElementById('login-form');
+      form?.classList.add('animate-shake');
+      setTimeout(() => form?.classList.remove('animate-shake'), 500);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 w-screen h-screen overflow-y-auto overflow-x-hidden bg-neon-dark flex flex-col items-center justify-center py-8">
+      
+      {/* 3D Background Layer */}
+      <div ref={mountRef} className="fixed inset-0 w-full h-full z-0 pointer-events-none" />
+
+      {/* Grid Overlay (Optional CSS Fallback) */}
+      <div className="fixed inset-0 w-full h-full z-0 bg-[url('/grid.png')] opacity-10 pointer-events-none" />
+
+      {/* Main UI Container */}
+      <div className="z-10 w-full max-w-[95%] sm:max-w-md px-4 sm:px-6 perspective-1000">
+        
+        {/* Header */}
+        <div className="text-center mb-6 sm:mb-8 animate-float">
+          <h1 className="text-2xl sm:text-3xl md:text-4xl font-cyber font-bold text-transparent bg-clip-text bg-gradient-to-r from-white to-neon-blue tracking-widest drop-shadow-[0_0_10px_rgba(0,243,255,0.5)]">
+            NEURAL GATE
+          </h1>
+          <p className="text-neon-blue text-xs uppercase tracking-[0.2em] sm:tracking-[0.3em] mt-2 opacity-80">
+            SecureShield OS v2.0
+          </p>
+        </div>
+
+        {/* Glass Form Card */}
+        <div 
+          id="login-form"
+          className={clsx(
+            "cyber-glass rounded-2xl p-6 sm:p-8 transition-all duration-500 transform",
+            isFocus ? "scale-105 shadow-neon-blue border-neon-blue" : "border-white/10"
+          )}
+        >
+          <form onSubmit={handleSubmit} className="space-y-6 relative">
+            {/* Scanning Line Effect */}
+            <div className="absolute inset-0 border-b-2 border-neon-blue/20 animate-scan pointer-events-none h-full" />
+
+            {/* Email Input */}
+            <div className="group relative">
+              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                <Mail className="h-5 w-5 text-neon-blue group-focus-within:animate-pulse" />
+              </div>
+              <input
+                type="email"
+                required
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                onFocus={handleFocus}
+                onBlur={handleBlur}
+                className="block w-full pl-10 pr-3 py-3 bg-slate-900/80 border border-slate-700 rounded-lg focus:ring-2 focus:ring-neon-blue focus:border-transparent text-white placeholder-slate-500 transition-all outline-none shadow-inner"
+                placeholder="Operative ID / Email"
+              />
+            </div>
+
+            {/* Password Input */}
+            <div className="group relative">
+              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                <Lock className="h-5 w-5 text-neon-purple group-focus-within:animate-pulse" />
+              </div>
+              <input
+                type="password"
+                required
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                onFocus={handleFocus}
+                onBlur={handleBlur}
+                className="block w-full pl-10 pr-3 py-3 bg-slate-900/80 border border-slate-700 rounded-lg focus:ring-2 focus:ring-neon-purple focus:border-transparent text-white placeholder-slate-500 transition-all outline-none shadow-inner"
+                placeholder="Passcode Sequence"
+              />
+            </div>
+
+            {/* Error Message */}
+            {error && (
+              <div className="text-neon-red text-xs text-center font-mono animate-pulse">
+                ⚠ {error}
+              </div>
+            )}
+
+            {/* Submit Button */}
+            <button
+              type="submit"
+              disabled={isLoading}
+              className={clsx(
+                "w-full flex justify-center items-center py-3 px-4 border border-transparent rounded-full shadow-neon-blue text-sm font-bold text-black bg-neon-blue hover:bg-white focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-neon-blue transition-all transform hover:-translate-y-1",
+                isLoading && "opacity-80 cursor-wait"
+              )}
+            >
+              {isLoading ? (
+                <span className="flex items-center gap-2">
+                  <span className="w-2 h-2 bg-black rounded-full animate-bounce" />
+                  DECRYPTING...
+                </span>
+              ) : (
+                <span className="flex items-center gap-2">
+                  AUTHENTICATE <ArrowRight className="w-4 h-4" />
+                </span>
+              )}
+            </button>
+          </form>
+          
+          {/* Footer Links */}
+          <div className="mt-6 text-center">
+             <Link to="/register" className="text-xs text-slate-400 hover:text-neon-blue transition-colors font-mono">
+               [ INITIATE NEW PROTOCOL ]
+             </Link>
+          </div>
+        </div>
+
+        {/* HUD Stats */}
+        <div className="mt-10 flex justify-center gap-6 text-xs font-mono text-slate-500">
+            <div className="flex items-center gap-1 animate-pulse">
+              <ShieldCheck className="w-3 h-3 text-neon-green" /> SECURE
+            </div>
+            <div className="flex items-center gap-1">
+              <Lock className="w-3 h-3 text-neon-blue" /> ENCRYPTED
+            </div>
+            <div className="flex items-center gap-1">
+              <Eye className="w-3 h-3 text-neon-purple" /> PRIVATE
+            </div>
+        </div>
+
+      </div>
+    </div>
+  );
+}
