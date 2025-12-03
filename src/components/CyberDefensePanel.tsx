@@ -1,16 +1,18 @@
-// src/components/CyberDefensePanel.tsx
-
 import { useEffect, useRef, useState, createContext, useContext } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 
 
+/**
+ * Small lerp utility for smooth transitions
+ */
+const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 
-// --------- Shared utilities / context ---------
-
-const lerp = (start: number, end: number, factor: number) =>
-  start + (end - start) * factor;
-
+/**
+ * Scene context so 3D can react to UI:
+ *  - cursorTarget: normalized mouse position
+ *  - isInputFocused: any auth input focused?
+ */
 interface SceneContextType {
   cursorTarget: { x: number; y: number };
   isInputFocused: boolean;
@@ -21,213 +23,188 @@ const SceneContext = createContext<SceneContextType>({
   isInputFocused: false,
 });
 
-// --------- Tactical Shield Core (Option 1) ---------
+/* -------------------------------------------------------------------------- */
+/*  TACTICAL SHIELD — MAIN VISUAL NARRATIVE                                   */
+/* -------------------------------------------------------------------------- */
 
 /**
- * Main hero object on the left.
- * Visually: layered octagonal shield + inner energy core + rotating scan wedge.
- * Story: this *is* SecureShield’s defense core.
+ * Layered octagonal shield:
+ *  - Outer plates = perimeter firewall
+ *  - Inner cores  = encryption layers
+ *  - Sweep arc    = active scan
+ *  - Edge markers = threat contact points
  */
-function TacticalShieldCore() {
+function TacticalShield() {
   const groupRef = useRef<THREE.Group>(null);
-  const coreRef = useRef<THREE.Mesh>(null);
-  const scanRef = useRef<THREE.Mesh>(null);
-  const rimRef = useRef<THREE.Mesh>(null);
+  const sweepRef = useRef<THREE.Mesh>(null);
+  const { cursorTarget, isInputFocused } = useContext(SceneContext);
+
+  // Pre-compute marker positions around perimeter
+  const markerPositions = useRef([
+    ...Array.from({ length: 8 }, (_, i) => {
+      const radius = 2.1;
+      const count = 8;
+      const angle = (i / count) * Math.PI * 2 + Math.PI / 8;
+      return {
+        x: Math.cos(angle) * radius,
+        y: Math.sin(angle) * radius * 0.85,
+        angle,
+      };
+    })
+  ]);
 
   useFrame((state) => {
     if (!groupRef.current) return;
+
     const t = state.clock.elapsedTime;
 
-    // Slow overall rotation – feels like an orbital defense core
-    groupRef.current.rotation.z = t * 0.12;
+    // Subtle sway as if the whole shield is hanging in a control room
+    groupRef.current.rotation.z = Math.sin(t * 0.2) * 0.08;
 
-    // Core breathing
-    if (coreRef.current) {
-      const s = 1 + Math.sin(t * 1.7) * 0.06;
-      coreRef.current.scale.set(s, s, s);
-      const mat = coreRef.current.material as THREE.MeshStandardMaterial;
-      mat.emissiveIntensity = 1.3 + Math.sin(t * 2.4) * 0.3;
+    // Tilt slightly with mouse (feels like “leaning” toward cursor)
+    const tiltX = -cursorTarget.y * 0.2;
+    const tiltY = cursorTarget.x * 0.25;
+    groupRef.current.rotation.x = lerp(
+      groupRef.current.rotation.x,
+      tiltX,
+      0.08,
+    );
+    groupRef.current.rotation.y = lerp(
+      groupRef.current.rotation.y,
+      tiltY,
+      0.08,
+    );
+
+    // Rotate scan sweep constantly
+    if (sweepRef.current) {
+      sweepRef.current.rotation.z = -t * 0.9;
     }
 
-    // Scan wedge sweeping around like a radar
-    if (scanRef.current) {
-      scanRef.current.rotation.z = -t * 0.9;
-      const mat = scanRef.current.material as THREE.MeshStandardMaterial;
-      mat.opacity = 0.22 + (Math.sin(t * 3) + 1) * 0.1; // soft breathing
-    }
-
-    // Outer rim subtle shimmering
-    if (rimRef.current) {
-      const mat = rimRef.current.material as THREE.MeshStandardMaterial;
-      mat.emissiveIntensity = 0.7 + (Math.sin(t * 2.8) + 1) * 0.15;
-    }
+    // Slight global scale bump when input focused (user = “under active verification”)
+    const baseScale = 1;
+    const focusScale = isInputFocused ? 1.08 : 1;
+    const pulse = 0.98 + Math.sin(t * 1.3) * 0.02;
+    const finalScale = baseScale * focusScale * pulse;
+    groupRef.current.scale.set(finalScale, finalScale, finalScale);
   });
 
-  // Helper: make an “octagon-ish” ring by reducing segments
-  const OCT_SEGMENTS = 8;
-
   return (
-    <group ref={groupRef} position={[-2.6, 0, 0]}>
-      {/* Outer defense rim */}
-      <mesh ref={rimRef}>
-        <ringGeometry
-          args={[2.1, 2.35, OCT_SEGMENTS, 1, 0, Math.PI * 2]}
-        />
+    <group ref={groupRef} position={[-2.8, 0.1, 0]}>
+      {/* OUTER RING – PERIMETER FIREWALL */}
+      <mesh>
+        <cylinderGeometry args={[2.4, 2.4, 0.02, 8]} />
         <meshStandardMaterial
-          color="#00F5FF"
-          emissive="#00F5FF"
-          emissiveIntensity={0.8}
+          color="#0f172a"
+          emissive="#22d3ee"
+          emissiveIntensity={0.5}
+          metalness={0.7}
+          roughness={0.2}
           transparent
           opacity={0.85}
-          side={THREE.DoubleSide}
         />
       </mesh>
 
-      {/* Secondary inner ring (slightly inset, violet tint) */}
+      {/* MID RING – ACTIVE DEFENSE */}
       <mesh>
-        <ringGeometry
-          args={[1.6, 1.9, OCT_SEGMENTS, 1, 0, Math.PI * 2]}
-        />
+        <cylinderGeometry args={[2.0, 2.0, 0.02, 8]} />
         <meshStandardMaterial
-          color="#7F5AF0"
-          emissive="#7F5AF0"
-          emissiveIntensity={0.9}
+          color="#020617"
+          emissive="#6366f1"
+          emissiveIntensity={0.8}
+          metalness={0.8}
+          roughness={0.15}
           transparent
-          opacity={0.5}
+          opacity={0.9}
+        />
+      </mesh>
+
+      {/* INNER RING – CORE ENCRYPTION */}
+      <mesh>
+        <cylinderGeometry args={[1.4, 1.4, 0.04, 8]} />
+        <meshStandardMaterial
+          color="#020617"
+          emissive="#22c55e"
+          emissiveIntensity={0.9}
+          metalness={0.9}
+          roughness={0.2}
+        />
+      </mesh>
+
+      {/* CORE PLATE */}
+      <mesh position={[0, 0, 0.04]}>
+        <circleGeometry args={[0.85, 32]} />
+        <meshStandardMaterial
+          color="#020617"
+          emissive="#0ea5e9"
+          emissiveIntensity={0.8}
+          metalness={0.9}
+          roughness={0.25}
+        />
+      </mesh>
+
+      {/* SCAN SWEEP ARC */}
+      <mesh ref={sweepRef} position={[0, 0, 0.06]}>
+        {/* partial ring (1/3 of circle) */}
+        <ringGeometry args={[1.45, 1.9, 64, 1, 0, Math.PI / 1.3]} />
+        <meshBasicMaterial
+          color="#22d3ee"
+          transparent
+          opacity={0.75}
           side={THREE.DoubleSide}
         />
       </mesh>
 
-      {/* Inner core plate */}
-      <mesh ref={coreRef}>
-        <circleGeometry args={[1.4, OCT_SEGMENTS]} />
-        <meshStandardMaterial
-          color="#02101A"
-          emissive="#00E8FF"
-          emissiveIntensity={1.1}
-          transparent
-          opacity={0.95}
-        />
-      </mesh>
-
-      {/* Hex/Oct grid lines inside the core */}
-      {Array.from({ length: 3 }, (_, i) => (
-        <mesh key={i}>
-          <ringGeometry
-            args={[0.4 + i * 0.3, 0.45 + i * 0.3, OCT_SEGMENTS, 1]}
-          />
-          <meshBasicMaterial
-            color="#00FFE0"
+      {/* PERIMETER HIT MARKERS (threat contact points) */}
+      {markerPositions.current.map((m, idx) => (
+        <mesh
+          key={idx}
+          position={[m.x, m.y, 0.08]}
+          rotation={[0, 0, m.angle]}
+        >
+          <boxGeometry args={[0.22, 0.06, 0.06]} />
+          <meshStandardMaterial
+            color={idx % 3 === 0 ? '#f97316' : '#a855f7'}
+            emissive={idx % 3 === 0 ? '#f97316' : '#a855f7'}
+            emissiveIntensity={1.1}
             transparent
-            opacity={0.35 - i * 0.08}
+            opacity={0.95}
           />
         </mesh>
       ))}
 
-      {/* Rotating scan wedge */}
-      <mesh ref={scanRef}>
-        {/* Ring segment: inner radius, outer radius, segments, thetaStart, thetaLength */}
-        <ringGeometry
-          args={[1.5, 2.2, 64, 1, 0, Math.PI / 3]}
-        />
-        <meshStandardMaterial
-          color="#00FFE0"
-          emissive="#00FFE0"
-          emissiveIntensity={0.9}
-          transparent
-          opacity={0.3}
-          side={THREE.DoubleSide}
-        />
-      </mesh>
-
-      {/* Threat markers around perimeter – clearly attached to the shield, not “random” */}
-      {Array.from({ length: 6 }, (_, i) => {
-        const angle = (i / 6) * Math.PI * 2;
-        const radius = 2.3;
-        return (
-          <mesh
-            key={i}
-            position={[
-              Math.cos(angle) * radius,
-              Math.sin(angle) * radius,
-              0.02,
-            ]}
-          >
-            <boxGeometry args={[0.12, 0.32, 0.06]} />
-            <meshStandardMaterial
-              color={i % 2 === 0 ? '#FF0055' : '#FBBF24'}
-              emissive={i % 2 === 0 ? '#FF0055' : '#FBBF24'}
-              emissiveIntensity={1.1}
-            />
-          </mesh>
-        );
-      })}
+      {/* INNER GLYPHS – orbiting “cipher plates” */}
+      {Array.from({ length: 3 }).map((_, i) => (
+        <mesh
+          key={i}
+          position={[0, 0, 0.02 + i * 0.01]}
+          rotation={[0, 0, (Math.PI / 6) * i]}
+        >
+          <ringGeometry args={[0.5 + i * 0.18, 0.55 + i * 0.19, 32]} />
+          <meshStandardMaterial
+            color="#38bdf8"
+            emissive="#38bdf8"
+            emissiveIntensity={0.5}
+            transparent
+            opacity={0.6 - i * 0.1}
+          />
+        </mesh>
+      ))}
     </group>
   );
 }
 
-// --------- Scanning Ring (kept, but simplified + aligned with shield) ---------
-
-function ScanningRing() {
-  const meshRef = useRef<THREE.Mesh>(null);
-  const targetRotation = useRef({ x: 0, y: 0 });
-  const { cursorTarget, isInputFocused } = useContext(SceneContext);
-
-  useFrame((state) => {
-    if (!meshRef.current) return;
-    const t = state.clock.elapsedTime;
-
-    // Cursor-driven tilt
-    targetRotation.current.y = cursorTarget.x * 0.4;
-    targetRotation.current.x = -cursorTarget.y * 0.25;
-
-    meshRef.current.rotation.y = lerp(
-      meshRef.current.rotation.y,
-      targetRotation.current.y,
-      0.08
-    );
-    meshRef.current.rotation.x = lerp(
-      meshRef.current.rotation.x,
-      targetRotation.current.x,
-      0.08
-    );
-
-    // Gentle rotation so it feels alive but not noisy
-    meshRef.current.rotation.z += 0.003;
-
-    const base = 0.9 + Math.sin(t * Math.PI) * 0.06;
-    const focusScale = isInputFocused ? 1.12 : 1;
-    const s = base * focusScale;
-    meshRef.current.scale.set(s, s, s);
-  });
-
-  return (
-    <mesh ref={meshRef} position={[-2.6, 0, -0.8]}>
-      <torusGeometry args={[2.55, 0.06, 12, 64]} />
-      <meshStandardMaterial
-        color="#00FFCC"
-        emissive="#00FFCC"
-        emissiveIntensity={0.7}
-        transparent
-        opacity={0.65}
-        toneMapped={false}
-      />
-    </mesh>
-  );
-}
-
-// --------- Main 3D Scene ---------
+/* -------------------------------------------------------------------------- */
+/*  BACKGROUND GRID + PARALLAX CAMERA                                         */
+/* -------------------------------------------------------------------------- */
 
 function CyberScene({
   mouseX = 0,
   mouseY = 0,
-  isExtension = false,
   cursorTarget,
   isInputFocused,
 }: {
   mouseX?: number;
   mouseY?: number;
-  isExtension?: boolean;
   cursorTarget: { x: number; y: number };
   isInputFocused: boolean;
 }) {
@@ -239,65 +216,67 @@ function CyberScene({
   useEffect(() => {
     const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
     prefersReducedMotion.current = mq.matches;
-    const onChange = (e: MediaQueryListEvent) => {
+    const handler = (e: MediaQueryListEvent) => {
       prefersReducedMotion.current = e.matches;
     };
-    mq.addEventListener('change', onChange);
-    return () => mq.removeEventListener('change', onChange);
+    mq.addEventListener('change', handler);
+    return () => mq.removeEventListener('change', handler);
   }, []);
 
   useFrame(() => {
+    // Group parallax (very small angle, feels like whole scene tilts)
     if (!prefersReducedMotion.current && groupRef.current) {
-      targetRotation.current.y = mouseX * 0.026; // ~1.5 degrees
-      targetRotation.current.x = -mouseY * 0.02; // ~1.1 degrees
-
+      targetRotation.current.y = mouseX * 0.024; // ≈ 1.3°
+      targetRotation.current.x = -mouseY * 0.018; // ≈ 1°
       groupRef.current.rotation.y = lerp(
         groupRef.current.rotation.y,
         targetRotation.current.y,
-        0.08
+        0.08,
       );
       groupRef.current.rotation.x = lerp(
         groupRef.current.rotation.x,
         targetRotation.current.x,
-        0.08
+        0.08,
       );
     }
 
+    // subtle camera drift
     if (!prefersReducedMotion.current) {
-      camera.position.x = Math.sin(Date.now() * 0.00012) * 0.12;
-      camera.position.y = Math.cos(Date.now() * 0.00009) * 0.09;
+      const t = performance.now() * 0.00008;
+      camera.position.x = Math.sin(t) * 0.25;
+      camera.position.y = 1.4 + Math.cos(t * 1.2) * 0.12;
+      camera.lookAt(0, 0, 0);
     }
   });
 
   return (
     <>
-      <color attach="background" args={['#050811']} />
-      <fog attach="fog" args={['#050811', 4, 18]} />
+      <color attach="background" args={['#020617']} />
+      <fog attach="fog" args={['#020617', 6, 22]} />
 
       <ambientLight intensity={0.18} />
-      <pointLight position={[8, 8, 8]} intensity={0.4} color="#00FFCC" />
-      <pointLight position={[-6, -4, 6]} intensity={0.28} color="#7F5AF0" />
+      <pointLight position={[8, 10, 8]} intensity={0.6} color="#38bdf8" />
+      <pointLight position={[-6, -4, 6]} intensity={0.3} color="#f97316" />
 
       <SceneContext.Provider value={{ cursorTarget, isInputFocused }}>
         <group ref={groupRef}>
-          {/* Hero shield core */}
-          {!isExtension && <TacticalShieldCore />}
-
-          {/* Scanning ring hugging the shield – gives depth, not randomness */}
-          {!isExtension && <ScanningRing />}
+          {/* Tactical shield is the hero element */}
+          <TacticalShield />
         </group>
       </SceneContext.Provider>
 
-      {/* Ground grid – softer, no giant cone, no random shapes */}
+      {/* Ground grid – very soft, no harsh lines */}
       <gridHelper
-        args={[40, 50, 'rgba(0,255,204,0.04)', 'rgba(26,26,46,0.03)']}
+        args={[40, 40, 'rgba(34,211,238,0.08)', 'rgba(15,23,42,0.2)']}
         position={[0, -2, 0]}
       />
     </>
   );
 }
 
-// --------- Wrapper used by Login / Register ---------
+/* -------------------------------------------------------------------------- */
+/*  CYBER DEFENSE PANEL WRAPPER (USED BY LOGIN / REGISTER)                    */
+/* -------------------------------------------------------------------------- */
 
 export function CyberDefensePanel({
   fullWidth: _fullWidth = false,
@@ -313,20 +292,22 @@ export function CyberDefensePanel({
   const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
 
   useEffect(() => {
+    // Extension popup detection
     const isPopup = window.innerWidth < 600 || window.innerHeight < 600;
     setIsExtension(isPopup);
 
-    const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const mq = window.matchMedia('(prefers-reduced-motion: reduce');
     setPrefersReducedMotion(mq.matches);
-    const onChange = (e: MediaQueryListEvent) =>
+    const handleMq = (e: MediaQueryListEvent) =>
       setPrefersReducedMotion(e.matches);
-    mq.addEventListener('change', onChange);
+    mq.addEventListener('change', handleMq);
 
     return () => {
-      mq.removeEventListener('change', onChange);
+      mq.removeEventListener('change', handleMq);
     };
   }, []);
 
+  // Mouse → parallax target
   useEffect(() => {
     if (prefersReducedMotion || isExtension) return;
 
@@ -335,8 +316,8 @@ export function CyberDefensePanel({
       const y = (e.clientY / window.innerHeight) * 2 - 1;
       setMousePos({ x, y });
       setCursorTarget((prev) => ({
-        x: prev.x + (x - prev.x) * 0.1,
-        y: prev.y + (y - prev.y) * 0.1,
+        x: prev.x + (x - prev.x) * 0.12,
+        y: prev.y + (y - prev.y) * 0.12,
       }));
     };
 
@@ -344,17 +325,15 @@ export function CyberDefensePanel({
     return () => window.removeEventListener('mousemove', handleMouseMove);
   }, [prefersReducedMotion, isExtension]);
 
-  // Hook into global input-focus / input-blur events from auth forms
+  // Hook up auth inputs via window events (you already dispatch these)
   useEffect(() => {
-    if (!onInputFocusChange) return;
-
     const handleFocus = () => {
       setIsInputFocused(true);
-      onInputFocusChange(true);
+      onInputFocusChange?.(true);
     };
     const handleBlur = () => {
       setIsInputFocused(false);
-      onInputFocusChange(false);
+      onInputFocusChange?.(false);
     };
 
     window.addEventListener('input-focus', handleFocus as any);
@@ -367,14 +346,14 @@ export function CyberDefensePanel({
   }, [onInputFocusChange]);
 
   return (
-    <div className="relative w-full h-full overflow-hidden bg-cyber-steel">
-      {/* Three.js canvas for full-page view */}
+    <div className="relative w-full h-full overflow-hidden bg-[#020617]">
+      {/* Three.js canvas (full cinematic) */}
       {!isExtension && (
         <Canvas
-          camera={{ position: [0, 2, 8], fov: 50 }}
+          camera={{ position: [0, 1.8, 9], fov: 45 }}
           gl={{
             antialias: false,
-            powerPreference: 'low-power',
+            powerPreference: 'high-performance',
             alpha: false,
           }}
           frameloop={document.hidden ? 'never' : 'always'}
@@ -383,57 +362,22 @@ export function CyberDefensePanel({
           <CyberScene
             mouseX={mousePos.x}
             mouseY={mousePos.y}
-            isExtension={isExtension}
             cursorTarget={cursorTarget}
             isInputFocused={isInputFocused}
           />
         </Canvas>
       )}
 
-      {/* Simple gradient fallback for extension popup */}
+      {/* Fallback for extension popup – flat gradient + grid */}
       {isExtension && (
-        <div className="absolute inset-0 bg-gradient-to-br from-cyber-steel via-slate-900 to-cyber-steel">
-          <div className="absolute inset-0 opacity-20 bg-cyber-grid" />
+        <div className="absolute inset-0 bg-gradient-to-br from-slate-900 via-slate-950 to-black">
+          <div className="absolute inset-0 opacity-30 bg-[radial-gradient(circle_at_top,_rgba(45,212,191,0.35),_transparent_55%),_radial-gradient(circle_at_bottom,_rgba(129,140,248,0.25),_transparent_60%)]" />
+          <div className="absolute inset-0 opacity-20 bg-[linear-gradient(rgba(148,163,184,0.15)_1px,transparent_1px),linear-gradient(90deg,rgba(148,163,184,0.15)_1px,transparent_1px)] bg-[size:40px_40px]" />
         </div>
       )}
 
-      {/* Lightweight HUD overlay – reused from your previous version */}
-      <svg className="absolute inset-0 w-full h-full pointer-events-none opacity-35">
-        <path
-          d="M 20 20 L 20 60 M 20 20 L 60 20"
-          stroke="#00ffcc"
-          strokeWidth="2"
-          fill="none"
-          className="animate-pulse-slow"
-        />
-        <path
-          d="M 20 calc(100% - 20) L 20 calc(100% - 60) M 20 calc(100% - 20) L 60 calc(100% - 20)"
-          stroke="#bc13fe"
-          strokeWidth="2"
-          fill="none"
-          className="animate-pulse-slow"
-        />
-      </svg>
-
-      {/* Vertical data glyph columns – still there, but low opacity so they don’t fight the shield */}
-      <div className="absolute inset-0 flex justify-around items-start pointer-events-none overflow-hidden opacity-10">
-        {Array.from({ length: 6 }).map((_, i) => (
-          <div
-            key={i}
-            className="flex flex-col space-y-1 text-[8px] font-mono text-cyan-400 animate-scroll-up"
-            style={{ animationDelay: `${i * 0.25}s` }}
-          >
-            {Array.from({ length: 40 }).map((__, j) => (
-              <span key={j}>
-                {Math.random().toString(16).substring(2, 8)}
-              </span>
-            ))}
-          </div>
-        ))}
-      </div>
-
-      {/* Vignette */}
-      <div className="absolute inset-0 bg-gradient-radial from-transparent via-transparent to-black/60 pointer-events-none" />
+      {/* VERY subtle vignette */}
+      <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(circle_at_center,transparent_40%,rgba(0,0,0,0.8))]" />
     </div>
   );
 }
