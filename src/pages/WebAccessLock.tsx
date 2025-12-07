@@ -1,169 +1,367 @@
-import { useState, useEffect } from 'react';
-import { Lock, Unlock, Trash2, Plus, RefreshCw, Sparkles } from 'lucide-react';
-import { useAuth } from '../context/AuthContext';
-import { webAccessLockApi } from '../services/api';
-import { notifyExtensionSync } from '../utils/extensionApi';
-import { ThreeRadar } from '../components/ui/ThreeRadar';
-import clsx from 'clsx';
+﻿import { useState, useEffect, useCallback, useMemo } from "react";
+import { Lock, Unlock, Trash2, RefreshCw, ShieldAlert } from "lucide-react";
+import { useAuth } from "../context/AuthContext";
+import { webAccessLockApi, ApiError } from "../services/api";
+import { notifyExtensionSync } from "../utils/extensionApi";
+import { Modal } from "../components/Modal";
+import { Button } from "../components/Button";
+import { Input } from "../components/Input";
+import { AlertDialog } from "../components/AlertDialog";
+import { Toast } from "../components/Toast";
 
-// Mock type if not imported
 interface TabLock { id: number; url: string; lock_name?: string; is_locked: boolean; }
+type ToastType = 'success' | 'error' | 'warning' | 'info';
+const MIN_PIN_LENGTH = 4;
 
 export function WebAccessLock() {
-  const { token } = useAuth();
+  const { token, user, setPin } = useAuth();
   const [locks, setLocks] = useState<TabLock[]>([]);
   const [loading, setLoading] = useState(true);
   const [newUrl, setNewUrl] = useState('');
   const [syncing, setSyncing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [pinModalOpen, setPinModalOpen] = useState(false);
+  const [pinValue, setPinValue] = useState('');
+  const [pinSaving, setPinSaving] = useState(false);
+  const [pinSetupError, setPinSetupError] = useState<string | null>(null);
+  const [pendingAction, setPendingAction] = useState<(() => void | Promise<void>) | null>(null);
+  const [toast, setToast] = useState<{ message: string; type: ToastType } | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<TabLock | null>(null);
 
-  useEffect(() => { if (token) fetchLocks(); }, [token]);
+  const hasPin = Boolean(user?.hasPin);
 
-  const fetchLocks = async () => {
+  const showToast = useCallback((message: string, type: ToastType = 'info') => {
+    setToast({ message, type });
+  }, []);
+
+  const handleToastClose = useCallback(() => setToast(null), []);
+
+  const handlePinRequired = useCallback(() => {
+    showToast('Set the master PIN to continue.', 'warning');
+    setPinModalOpen(true);
+  }, [showToast]);
+
+  const handleApiError = useCallback((err: unknown, fallback: string) => {
+    if (err instanceof ApiError) {
+      const message = err.message || fallback;
+      if (err.status === 403 && message.toLowerCase().includes('pin')) {
+        handlePinRequired();
+        return;
+      }
+      showToast(message, 'error');
+      return;
+    }
+
+    showToast(fallback, 'error');
+  }, [handlePinRequired, showToast]);
+
+  const fetchLocks = useCallback(async () => {
     if (!token) return;
     setLoading(true);
     try {
       const data = await webAccessLockApi.list(token);
       setLocks(data.locks);
-    } catch (err) { console.error(err); } finally { setLoading(false); }
-  };
+      setError(null);
+    } catch (err) {
+      console.error(err);
+      setError('We could not refresh the current restrictions.');
+      handleApiError(err, 'We could not refresh the current restrictions.');
+    } finally {
+      setLoading(false);
+    }
+  }, [token, handleApiError]);
 
-  const handleAddLock = async (e: React.FormEvent) => {
+  useEffect(() => {
+    fetchLocks();
+  }, [fetchLocks]);
+
+  useEffect(() => {
+    if (!pinModalOpen) {
+      setPinSetupError(null);
+      setPinValue('');
+    }
+  }, [pinModalOpen]);
+
+  const guardWithPin = useCallback((action: () => void | Promise<void>) => {
+    if (hasPin) {
+      void action();
+      return;
+    }
+
+    setPendingAction(() => action);
+    handlePinRequired();
+  }, [hasPin, handlePinRequired]);
+
+  useEffect(() => {
+    if (hasPin && pendingAction) {
+      const action = pendingAction;
+      setPendingAction(null);
+      void action();
+    }
+  }, [hasPin, pendingAction]);
+
+  const handleAddLock = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!token || !newUrl) return;
-    try {
-      await webAccessLockApi.create(token, { url: newUrl });
-      setNewUrl('');
-      fetchLocks();
-      notifyExtensionSync();
-    } catch (err) { alert('Failed to lock'); }
+    if (!token) return;
+    const trimmed = newUrl.trim();
+    if (!trimmed) return;
+
+    const persistLock = async () => {
+      try {
+        await webAccessLockApi.create(token, { url: trimmed });
+        setNewUrl('');
+        await fetchLocks();
+        notifyExtensionSync();
+        showToast('Site locked successfully.', 'success');
+      } catch (err) {
+        console.error(err);
+        handleApiError(err, 'Unable to add that domain. Please try again.');
+      }
+    };
+
+    guardWithPin(persistLock);
   };
 
-  const handleToggle = async (id: number, state: boolean) => {
+  const handleToggle = (id: number, state: boolean) => {
     if (!token) return;
-    // Optimistic UI update
-    setLocks(prev => prev.map(l => l.id === id ? { ...l, is_locked: !state } : l));
-    try {
-      await webAccessLockApi.toggleLock(token, id, !state);
-      notifyExtensionSync();
-    } catch { fetchLocks(); }
+
+    const toggleLock = async () => {
+      setLocks(prev => prev.map(l => (l.id === id ? { ...l, is_locked: !state } : l)));
+      try {
+        await webAccessLockApi.toggleLock(token, id, !state);
+        notifyExtensionSync();
+        showToast(!state ? 'Restriction enforced.' : 'Restriction unlocked.', 'success');
+      } catch (err) {
+        fetchLocks();
+        handleApiError(err, 'Unable to update that restriction right now.');
+      }
+    };
+
+    guardWithPin(toggleLock);
   };
+
+  const requestDelete = (lock: TabLock) => {
+    if (!token) return;
+    setDeleteTarget(lock);
+  };
+
+  const handleDeleteConfirm = useCallback(() => {
+    if (!token || !deleteTarget) return;
+    const target = deleteTarget;
+
+    const deleteLock = async () => {
+      try {
+        await webAccessLockApi.delete(token, target.id);
+        await fetchLocks();
+        notifyExtensionSync();
+        showToast('Restriction removed.', 'success');
+      } catch (err) {
+        console.error(err);
+        handleApiError(err, 'Unable to remove that restriction.');
+      }
+    };
+
+    guardWithPin(deleteLock);
+  }, [token, deleteTarget, guardWithPin, fetchLocks, handleApiError, showToast]);
+
+  const handleRefresh = async () => {
+    if (!token) return;
+    setSyncing(true);
+    await fetchLocks();
+    notifyExtensionSync();
+    setSyncing(false);
+  };
+
+  const handlePinSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const normalized = pinValue.trim();
+    if (normalized.length < MIN_PIN_LENGTH) {
+      setPinSetupError(`Use at least ${MIN_PIN_LENGTH} digits for your master PIN.`);
+      return;
+    }
+
+    setPinSetupError(null);
+    setPinSaving(true);
+    try {
+      await setPin(normalized);
+      setPinModalOpen(false);
+      showToast('Master PIN saved. You can continue.', 'success');
+    } catch (err) {
+      console.error(err);
+      setPinSetupError(err instanceof Error ? err.message : 'Unable to save your PIN right now.');
+    } finally {
+      setPinSaving(false);
+    }
+  };
+
+  const onboardingBanner = useMemo(() => {
+    if (hasPin) return null;
+
+    return (
+      <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-start gap-3 text-amber-900">
+          <div className="rounded-xl bg-amber-100 p-2">
+            <ShieldAlert className="h-5 w-5" />
+          </div>
+          <div>
+            <p className="font-semibold">Create your master PIN</p>
+            <p className="text-sm text-amber-800">
+              We detected your account was created with Google. Set a PIN before managing restrictions to keep your suite secure.
+            </p>
+          </div>
+        </div>
+        <Button variant="warning" onClick={() => setPinModalOpen(true)}>
+          Set PIN now
+        </Button>
+      </div>
+    );
+  }, [hasPin]);
 
   return (
-    <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-8">
-      
-      {/* Header Section */}
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-        <div>
-          <h1 className="text-3xl font-bold text-slate-900 dark:text-white mb-2 flex items-center gap-3">
-            Web Access Control
-            <span className="px-3 py-1 bg-blue-500/10 text-blue-500 text-xs rounded-full border border-blue-500/20">ACTIVE</span>
-          </h1>
-          <p className="text-slate-500 dark:text-slate-400">Manage restricted domains and access policies.</p>
-        </div>
-        <button 
-          onClick={() => { setSyncing(true); setTimeout(() => setSyncing(false), 1000); fetchLocks(); notifyExtensionSync(); }}
-          className={clsx("p-3 rounded-xl glass-card text-slate-500 hover:text-blue-500 transition-all", syncing && "animate-spin text-blue-500")}
-        >
-          <RefreshCw className="w-5 h-5" />
-        </button>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        
-        {/* Left Column: Input & Radar */}
-        <div className="lg:col-span-1 space-y-6">
-          {/* Radar Visual */}
-          <div className="glass-panel p-1 rounded-2xl shadow-2xl">
-             <ThreeRadar />
+    <div className="max-w-4xl mx-auto px-4 py-10 space-y-8">
+      <header className="space-y-3">
+        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">SecureShield</p>
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="space-y-1">
+            <h1 className="text-2xl font-semibold text-slate-900">Web access lock</h1>
+            <p className="text-sm text-slate-500">
+              Maintain a short list of domains that should stay blocked in every session.
+            </p>
           </div>
+          <button
+            type="button"
+            onClick={handleRefresh}
+            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:border-slate-300"
+            disabled={loading || syncing}
+          >
+            <RefreshCw className={`h-4 w-4 ${syncing ? 'animate-spin' : ''}`} />
+            {syncing ? 'Refreshing' : 'Refresh list'}
+          </button>
+        </div>
+        {!hasPin && onboardingBanner}
+        {error && (
+          <div className="rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {error}
+          </div>
+        )}
+      </header>
 
-          {/* Add Lock Form */}
-          <div className="glass-panel p-6 rounded-2xl">
-            <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
-              <Plus className="w-5 h-5 text-blue-500" /> New Restriction
-            </h3>
-            <form onSubmit={handleAddLock} className="space-y-4">
-              <div className="relative">
-                <input 
-                  type="text" 
-                  placeholder="domain.com" 
-                  value={newUrl}
-                  onChange={e => setNewUrl(e.target.value)}
-                  className="cyber-input w-full px-4 py-3 rounded-xl"
-                />
-                <div className="absolute right-3 top-3 text-slate-400 pointer-events-none">🌐</div>
-              </div>
-              <button className="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-semibold shadow-lg hover:shadow-blue-500/25 transition-all">
-                Lock Site
-              </button>
-            </form>
+      <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <h2 className="text-lg font-semibold text-slate-900">Add a restriction</h2>
+        <p className="text-sm text-slate-500 mb-4">Enter a domain to keep it blocked across the suite.</p>
+        <form onSubmit={handleAddLock} className="flex flex-col gap-3 sm:flex-row">
+          <label className="sr-only" htmlFor="restricted-domain">Domain</label>
+          <input
+            id="restricted-domain"
+            type="text"
+            placeholder="domain.com"
+            value={newUrl}
+            onChange={(e) => setNewUrl(e.target.value)}
+            className="flex-1 rounded-xl border border-slate-300 px-4 py-3 text-base text-slate-900 placeholder:text-slate-400 focus:border-slate-900 focus:outline-none focus:ring-4 focus:ring-slate-900/10"
+          />
+          <button
+            type="submit"
+            className="rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-60"
+            disabled={!newUrl.trim()}
+          >
+            Lock site
+          </button>
+        </form>
+      </section>
+
+      <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 className="text-lg font-semibold text-slate-900">Active restrictions</h2>
+            <p className="text-sm text-slate-500">{locks.length} {locks.length === 1 ? 'domain' : 'domains'} total</p>
           </div>
         </div>
 
-        {/* Right Column: List */}
-        <div className="lg:col-span-2">
-          <div className="glass-panel rounded-2xl overflow-hidden min-h-[500px] flex flex-col">
-            <div className="p-6 border-b border-slate-200 dark:border-white/10 bg-slate-50/50 dark:bg-white/5 flex justify-between">
-              <h3 className="font-semibold">Active Policies ({locks.length})</h3>
-              <div className="flex gap-2 text-xs">
-                 <span className="px-2 py-1 rounded bg-green-500/10 text-green-500">● Secure</span>
-                 <span className="px-2 py-1 rounded bg-red-500/10 text-red-500">● Blocked</span>
-              </div>
-            </div>
-            
-            <div className="divide-y divide-slate-200 dark:divide-white/5 overflow-y-auto max-h-[600px]">
-              {loading ? (
-                <div className="p-12 text-center text-slate-400 flex flex-col items-center">
-                  <div className="w-12 h-12 border-4 border-slate-300 border-t-blue-500 rounded-full animate-spin mb-4"></div>
-                  <p>Loading policies...</p>
-                </div>
-              ) : locks.length === 0 ? (
-                 <div className="p-12 text-center text-slate-400 flex flex-col items-center">
-                    <Sparkles className="w-12 h-12 mb-4 text-slate-600 opacity-50" />
-                    <p>No restrictions active. System is open.</p>
-                 </div>
-              ) : (
-                locks.map(lock => (
-                  <div key={lock.id} className="p-4 flex items-center justify-between hover:bg-slate-50 dark:hover:bg-white/5 transition-colors group">
-                    <div className="flex items-center gap-4">
-                      <div className={clsx(
-                        "w-12 h-12 rounded-xl flex items-center justify-center transition-colors",
-                        lock.is_locked ? "bg-red-500/10 text-red-500" : "bg-green-500/10 text-green-500"
-                      )}>
-                        {lock.is_locked ? <Lock className="w-6 h-6" /> : <Unlock className="w-6 h-6" />}
-                      </div>
-                      <div>
-                        <h4 className="font-medium text-lg">{lock.lock_name || lock.url}</h4>
-                        <p className="text-xs text-slate-400 font-mono">{lock.url}</p>
-                      </div>
-                    </div>
-                    
-                    <div className="flex items-center gap-3 opacity-80 group-hover:opacity-100 transition-opacity">
-                       <button 
-                         onClick={() => handleToggle(lock.id, lock.is_locked)}
-                         className={clsx(
-                           "px-4 py-2 rounded-lg text-sm font-medium transition-colors",
-                           lock.is_locked 
-                             ? "bg-slate-100 dark:bg-slate-800 hover:bg-green-500 hover:text-white" 
-                             : "bg-slate-100 dark:bg-slate-800 hover:bg-red-500 hover:text-white"
-                         )}
-                       >
-                         {lock.is_locked ? 'Unlock' : 'Lock'}
-                       </button>
-                       <button 
-                         onClick={() => { if(confirm("Delete rule?")) webAccessLockApi.delete(token!, lock.id).then(() => { fetchLocks(); notifyExtensionSync(); })}}
-                         className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-500/10 rounded-lg"
-                       >
-                         <Trash2 className="w-5 h-5" />
-                       </button>
-                    </div>
+        <div className="mt-4 divide-y divide-slate-100">
+          {loading ? (
+            <div className="py-12 text-center text-slate-500">Loading</div>
+          ) : locks.length === 0 ? (
+            <div className="py-12 text-center text-slate-500">No blocked domains yet.</div>
+          ) : (
+            locks.map((lock) => (
+              <div key={lock.id} className="flex flex-col gap-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex items-start gap-3">
+                  <div className={`flex h-10 w-10 items-center justify-center rounded-xl border ${lock.is_locked ? 'border-red-200 bg-red-50 text-red-600' : 'border-green-200 bg-green-50 text-green-600'}`}>
+                    {lock.is_locked ? <Lock className="h-4 w-4" /> : <Unlock className="h-4 w-4" />}
                   </div>
-                ))
-              )}
-            </div>
-          </div>
+                  <div>
+                    <p className="font-medium text-slate-900">{lock.lock_name || lock.url}</p>
+                    <p className="text-sm text-slate-500">{lock.url}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => handleToggle(lock.id, lock.is_locked)}
+                    className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:border-slate-300"
+                  >
+                    {lock.is_locked ? 'Unlock' : 'Lock'}
+                  </button>
+                  <button
+                    onClick={() => requestDelete(lock)}
+                    className="rounded-xl border border-slate-200 px-3 py-2 text-slate-500 hover:text-red-600"
+                    aria-label="Remove restriction"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
+            ))
+          )}
         </div>
-      </div>
+      </section>
+
+      <AlertDialog
+        isOpen={Boolean(deleteTarget)}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={handleDeleteConfirm}
+        title="Remove restriction?"
+        message={
+          <span>
+            You're about to remove <span className="font-semibold">{deleteTarget?.lock_name || deleteTarget?.url}</span>. This
+            site will be accessible immediately.
+          </span>
+        }
+        type="confirm"
+        confirmText="Remove"
+        cancelText="Keep locked"
+      />
+
+      {toast && (
+        <Toast
+          message={toast.message}
+          type={toast.type}
+          onClose={handleToastClose}
+        />
+      )}
+
+      <Modal isOpen={pinModalOpen} onClose={() => setPinModalOpen(false)} title="Set your master PIN" size="sm">
+        <form onSubmit={handlePinSubmit} className="space-y-4">
+          <Input
+            label="Master PIN"
+            type="password"
+            value={pinValue}
+            onChange={(e) => setPinValue(e.target.value)}
+            placeholder={`Enter a ${MIN_PIN_LENGTH}+ digit PIN`}
+            error={pinSetupError || undefined}
+          />
+          <p className="text-sm text-slate-600">
+            Your PIN encrypts lock actions across the app and extension. Choose digits you will remember.
+          </p>
+          <div className="flex justify-end gap-3">
+            <Button type="button" variant="secondary" onClick={() => setPinModalOpen(false)} disabled={pinSaving}>
+              Cancel
+            </Button>
+            <Button type="submit" loading={pinSaving}>
+              Save PIN
+            </Button>
+          </div>
+        </form>
+      </Modal>
     </div>
   );
 }

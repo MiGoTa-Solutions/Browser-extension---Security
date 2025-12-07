@@ -1,196 +1,154 @@
-import React, { useState } from 'react';
+import { FormEvent, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { ShieldCheck, Fingerprint, ArrowRight } from 'lucide-react';
-import { motion } from 'framer-motion';
 import { CommandLayout } from '../components/CommandLayout';
-import { AuthPanel } from '../components/AuthPanel';
-import { HUDOverlay } from '../components/HUDOverlay';
+import { startGoogleAuthFlow, startExtensionGoogleAuthFlow } from '../services/api';
+import { isExtensionContext } from '../utils/extensionApi';
+import { waitForAuthToken } from '../utils/chromeStorage';
+import { logError, logInfo, logWarn } from '../utils/logger';
 
 export function Login() {
   const navigate = useNavigate();
-  const { login } = useAuth();
-  
+  const { login, completeTokenLogin } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isGoogleRedirecting, setIsGoogleRedirecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [focusedField, setFocusedField] = useState<string | null>(null);
-  const [emailValid, setEmailValid] = useState(false);
-  const [passwordTyping, setPasswordTyping] = useState(false);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsLoading(true);
+  const handleGoogleSignIn = async () => {
     setError(null);
+    setIsGoogleRedirecting(true);
 
     try {
-      await login(email, password);
-      // Optional: success pulse for scene if you want later
-      // window.dispatchEvent(new Event('auth-success'));
-      setTimeout(() => navigate('/'), 800);
+      const context = isExtensionContext() ? 'extension' : 'web';
+      logInfo('LoginPage', 'Google auth started', { context });
+
+      if (context === 'extension') {
+        logInfo('LoginPage', 'Starting Google auth inside extension');
+        const token = await startExtensionGoogleAuthFlow();
+        await completeTokenLogin(token);
+        logInfo('LoginPage', 'Extension Google auth completed');
+        navigate('/wal', { replace: true });
+        setIsGoogleRedirecting(false);
+      } else {
+        logInfo('LoginPage', 'Redirecting to Google auth (web)');
+        startGoogleAuthFlow();
+      }
     } catch (err) {
-      setError('AUTHENTICATION FAILED: ACCESS DENIED');
-      setIsLoading(false);
-      // IMPORTANT: drive scene error reaction
-      window.dispatchEvent(new Event('auth-error'));
+      const fallbackToken = await waitForAuthToken();
+      if (fallbackToken) {
+        try {
+          logWarn('LoginPage', 'Popup reported error but token detected, attempting recovery');
+          await completeTokenLogin(fallbackToken);
+          navigate('/wal', { replace: true });
+          logInfo('LoginPage', 'Recovered Google auth via stored token');
+          setIsGoogleRedirecting(false);
+          return;
+        } catch (tokenError) {
+          logError('LoginPage', 'Stored token recovery failed', { error: tokenError instanceof Error ? tokenError.message : 'unknown_error' });
+        }
+      }
+
+      setError('Google sign-in did not complete. Please try again.');
+      setIsGoogleRedirecting(false);
+      logError('LoginPage', 'Google auth flow failed', { error: err instanceof Error ? err.message : 'unknown_error' });
     }
   };
 
-  const statusBadges = [
-    { label: 'SYSTEM HEALTH: STABLE', status: 'active', color: 'green' },
-    { label: 'ENCRYPTION: ACTIVE', status: 'active', color: 'cyan' },
-    { label: 'THREAT BLOCKING: ENABLED', status: 'active', color: 'violet' },
-  ];
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setIsSubmitting(true);
+    setError(null);
+
+    try {
+      logInfo('LoginPage', 'Email login submitted', { email });
+      await login(email, password);
+      navigate('/wal', { replace: true });
+    } catch (err) {
+      setError('Unable to sign in with the provided credentials.');
+      setIsSubmitting(false);
+      logError('LoginPage', 'Email login failed', { error: err instanceof Error ? err.message : 'unknown_error' });
+    }
+  };
 
   return (
-    <>
-      <HUDOverlay status="online" encryption="active" />
-      <CommandLayout statusBadges={statusBadges}>
-        <motion.div
-          initial={{ opacity: 0, y: 30 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.6, ease: 'easeOut' }}
+    <CommandLayout>
+      <div className="bg-white rounded-2xl shadow-lg border border-slate-200 px-8 py-10 space-y-8">
+        <div className="space-y-1">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">SecureShield</p>
+          <h1 className="text-2xl font-semibold text-slate-900">Sign in to your account</h1>
+          <p className="text-sm text-slate-500">Use your work email and password to continue.</p>
+        </div>
+
+        {error && (
+          <div className="rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {error}
+          </div>
+        )}
+
+        <button
+          type="button"
+          onClick={handleGoogleSignIn}
+          disabled={isSubmitting || isGoogleRedirecting}
+          className="w-full rounded-xl border border-slate-200 bg-white py-3 text-sm font-semibold tracking-wide text-slate-900 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
         >
-          <AuthPanel
-            title="COMMAND GATEWAY ACCESS"
-            subtitle="LOGIN ACCESS: LEVEL-7 SECURITY PROTOCOL"
+          {isGoogleRedirecting ? 'Redirecting…' : 'Continue with Google'}
+        </button>
+
+        <div className="flex items-center gap-4 text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">
+          <span className="h-px flex-1 bg-slate-200" />
+          or
+          <span className="h-px flex-1 bg-slate-200" />
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-5">
+          <div className="space-y-2">
+            <label htmlFor="email" className="text-sm font-medium text-slate-700">
+              Email
+            </label>
+            <input
+              id="email"
+              type="email"
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              required
+              placeholder="name@company.com"
+              className="w-full rounded-xl border border-slate-200 px-4 py-3 text-base text-slate-900 placeholder:text-slate-400 focus:border-slate-900 focus:outline-none focus:ring-4 focus:ring-slate-900/10"
+            />
+          </div>
+
+          <div className="space-y-2">
+            <label htmlFor="password" className="text-sm font-medium text-slate-700">
+              Password
+            </label>
+            <input
+              id="password"
+              type="password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              required
+              placeholder="••••••••"
+              className="w-full rounded-xl border border-slate-200 px-4 py-3 text-base text-slate-900 placeholder:text-slate-400 focus:border-slate-900 focus:outline-none focus:ring-4 focus:ring-slate-900/10"
+            />
+          </div>
+
+          <button
+            type="submit"
+            disabled={isSubmitting || isGoogleRedirecting}
+            className="w-full rounded-xl bg-slate-900 py-3 text-sm font-semibold tracking-wide text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            <form onSubmit={handleSubmit} className="space-y-5">
-              {/* Micro-text status */}
-              {focusedField && (
-                <div className="text-center mb-4">
-                  <p className="text-xs font-mono text-cyan-400 animate-pulse-fast">
-                    {focusedField === 'email' && '⚡ VERIFYING OPERATIVE ID...'}
-                    {focusedField === 'password' && '🔐 ENABLING BIOMETRIC PASSCODE...'}
-                  </p>
-                </div>
-              )}
+            {isSubmitting ? 'Signing in…' : 'Sign in'}
+          </button>
+        </form>
 
-              {/* Email Input */}
-              <motion.div 
-                className="group relative"
-                whileFocus={{ scale: 1.01 }}
-                transition={{ type: 'spring', stiffness: 300, damping: 20 }}
-              >
-                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none z-10">
-                  <ShieldCheck className="h-5 w-5 text-cyan-400 group-focus-within:text-cyan-300 transition-colors" />
-                </div>
-                <motion.input
-                  type="email"
-                  required
-                  value={email}
-                  onChange={(e) => {
-                    setEmail(e.target.value);
-                    setEmailValid(/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e.target.value));
-                  }}
-                  onFocus={() => {
-                    setFocusedField('email');
-                    window.dispatchEvent(new Event('input-focus'));
-                  }}
-                  onBlur={() => {
-                    setFocusedField(null);
-                    window.dispatchEvent(new Event('input-blur'));
-                  }}
-                  className={`cyber-input w-full pl-12 pr-4 py-3.5 bg-white/10 backdrop-blur-xl border border-cyan-400/20 rounded-xl text-white placeholder-cyan-300/40 font-mono text-sm tracking-wide focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/50 focus:bg-white/5 transition-all outline-none ${emailValid ? 'input-valid-glow' : ''}`}
-                  placeholder="OPERATIVE ID / EMAIL"
-                  whileFocus={{ scale: 1.01 }}
-                />
-              </motion.div>
-
-              {/* Password Input */}
-              <motion.div 
-                className="group relative"
-                whileFocus={{ scale: 1.01 }}
-                transition={{ type: 'spring', stiffness: 300, damping: 20 }}
-              >
-                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none z-10">
-                  <Fingerprint className="h-5 w-5 text-magenta-400 group-focus-within:text-magenta-300 transition-colors" />
-                </div>
-                <motion.input
-                  type="password"
-                  required
-                  value={password}
-                  onChange={(e) => {
-                    setPassword(e.target.value);
-                    setPasswordTyping(e.target.value.length > 0);
-                  }}
-                  onFocus={() => {
-                    setFocusedField('password');
-                    window.dispatchEvent(new Event('input-focus'));
-                  }}
-                  onBlur={() => {
-                    setFocusedField(null);
-                    window.dispatchEvent(new Event('input-blur'));
-                  }}
-                  className={`cyber-input w-full pl-12 pr-4 py-3.5 bg-white/10 backdrop-blur-xl border border-magenta-400/20 rounded-xl text-white placeholder-magenta-300/40 font-mono text-sm tracking-wide focus:border-magenta-400 focus:ring-2 focus:ring-magenta-400/50 focus:bg-white/5 transition-all outline-none ${passwordTyping ? 'input-typing-glow' : ''}`}
-                  placeholder="BIOMETRIC PASSCODE"
-                  whileFocus={{ scale: 1.01 }}
-                />
-              </motion.div>
-
-              {/* Error Display */}
-              {error && (
-                <div className="bg-red-500/10 border border-red-400/40 rounded-lg p-3 animate-shake">
-                  <p className="text-red-400 text-xs font-mono text-center tracking-wider">{error}</p>
-                </div>
-              )}
-
-              {/* Submit Button with Bleed Sheen */}
-              <motion.button
-                type="submit"
-                disabled={isLoading}
-                whileHover={{ scale: 1.02, boxShadow: '0 0 40px rgba(0,243,255,0.6)' }}
-                whileTap={{ scale: 0.98 }}
-                transition={{ type: 'spring', stiffness: 400, damping: 25 }}
-                onHoverStart={() => window.dispatchEvent(new CustomEvent('button-hover', { detail: true }))}
-                onHoverEnd={() => window.dispatchEvent(new CustomEvent('button-hover', { detail: false }))}
-                className="group relative w-full py-4 rounded-xl bg-gradient-to-r from-cyan-500 via-magenta-500 to-cyan-500 bg-size-200 bg-pos-0 hover:bg-pos-100 text-white font-black uppercase tracking-widest text-sm overflow-hidden transition-all duration-500 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <div className="bleed-sheen" />
-                <span className="relative z-10 flex items-center justify-center gap-3">
-                  {isLoading ? (
-                    <>
-                      <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                      <span>AUTHENTICATING...</span>
-                    </>
-                  ) : (
-                    <>
-                      <ShieldCheck className="w-5 h-5" />
-                      <span>UNLOCK SYSTEM</span>
-                      <ArrowRight className="w-5 h-5 group-hover:translate-x-2 transition-transform duration-300" />
-                    </>
-                  )}
-                </span>
-              </motion.button>
-
-              {/* Divider */}
-              <div className="relative py-4">
-                <div className="absolute inset-0 flex items-center">
-                  <div className="w-full h-px bg-gradient-to-r from-transparent via-cyan-400/30 to-transparent"></div>
-                </div>
-                <div className="relative flex justify-center">
-                  <span className="px-4 text-xs text-cyan-400/50 font-mono tracking-widest bg-black/40">
-                    OR
-                  </span>
-                </div>
-              </div>
-
-              {/* Register Link */}
-              <div className="text-center space-y-2">
-                <p className="text-cyan-300/50 text-xs font-mono tracking-wider">NO OPERATIVE CREDENTIALS?</p>
-                <Link
-                  to="/register"
-                  className="inline-flex items-center gap-2 text-cyan-400 hover:text-cyan-300 font-bold text-sm uppercase tracking-widest transition-all group"
-                >
-                  <span>INITIALIZE NEW PROFILE</span>
-                  <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
-                </Link>
-              </div>
-            </form>
-          </AuthPanel>
-        </motion.div>
-      </CommandLayout>
-    </>
+        <div className="text-center text-sm text-slate-600">
+          <span>Need an account? </span>
+          <Link to="/register" className="font-semibold text-slate-900 hover:underline">
+            Create one
+          </Link>
+        </div>
+      </div>
+    </CommandLayout>
   );
 }

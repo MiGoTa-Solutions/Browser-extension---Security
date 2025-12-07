@@ -2,6 +2,7 @@ import { Router, Response } from 'express';
 import { z } from 'zod';
 import { pool } from '../config/database';
 import { requireAuth, AuthenticatedRequest } from '../middleware/requireAuth';
+import { requireMasterPin } from '../middleware/requireMasterPin';
 import { RowDataPacket, ResultSetHeader } from 'mysql2';
 
 const router = Router();
@@ -34,7 +35,7 @@ router.get('/', requireAuth, async (req: AuthenticatedRequest, res: Response) =>
 });
 
 // NEW: Toggle Status Route
-router.patch('/:id/status', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+router.patch('/:id/status', requireAuth, requireMasterPin, async (req: AuthenticatedRequest, res: Response) => {
   const { is_locked } = req.body;
   if (typeof is_locked !== 'boolean') return res.status(400).json({ error: 'is_locked must be a boolean' });
 
@@ -50,7 +51,7 @@ router.patch('/:id/status', requireAuth, async (req: AuthenticatedRequest, res: 
   }
 });
 
-router.post('/', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+router.post('/', requireAuth, requireMasterPin, async (req: AuthenticatedRequest, res: Response) => {
   const parsed = lockSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0].message });
 
@@ -91,7 +92,7 @@ router.post('/', requireAuth, async (req: AuthenticatedRequest, res: Response) =
   }
 });
 
-router.delete('/:id', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+router.delete('/:id', requireAuth, requireMasterPin, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const [result] = await pool.execute<ResultSetHeader>('DELETE FROM tab_locks WHERE id = ? AND user_id = ?', [req.params.id, req.userId]);
     if (result.affectedRows === 0) return res.status(404).json({ error: 'Lock not found' });

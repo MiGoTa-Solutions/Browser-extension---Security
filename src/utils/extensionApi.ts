@@ -1,6 +1,6 @@
 // ⚠️ IMPORTANT: Replace this with your actual Extension ID from chrome://extensions
 // If you are in development mode, this ID changes unless you set a "key" in manifest.json
-const EXTENSION_ID = "ikjflgmjpfgpmfemhlogmochmjcjhihg"; 
+export const EXTENSION_ID = "ikjflgmjpfgpmfemhlogmochmjcjhihg"; 
 
 /**
  * safeSendMessage
@@ -43,4 +43,22 @@ export const notifyExtensionSync = async () => {
       console.warn("[ExtensionApi] Extension not found or connection not allowed. Check manifest.json 'externally_connectable'.", e);
     }
   }
+};
+
+export const getActiveTabUrl = (): Promise<string | null> => {
+  if (!isExtensionContext() || !chrome.tabs?.query) {
+    return Promise.resolve(typeof window !== 'undefined' ? window.location.href : null);
+  }
+
+  return new Promise((resolve) => {
+    try {
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        const tab = tabs?.[0];
+        resolve(typeof tab?.url === 'string' ? tab.url : null);
+      });
+    } catch (error) {
+      console.warn('[ExtensionApi] Failed to read active tab url', error);
+      resolve(null);
+    }
+  });
 };

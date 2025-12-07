@@ -28,6 +28,7 @@ export const pool: Pool = mysql.createPool(poolOptions);
 
 export async function ensureSchema() {
   await ensureUsersTable();
+  await ensureUserSettingsTable();
   await ensureTabLocksTable();
 }
 
@@ -36,14 +37,73 @@ async function ensureUsersTable() {
     CREATE TABLE IF NOT EXISTS users (
       id INT AUTO_INCREMENT PRIMARY KEY,
       email VARCHAR(255) NOT NULL UNIQUE,
-      password_hash VARCHAR(255) NOT NULL,
+      password_hash VARCHAR(255) NULL,
       pin_hash VARCHAR(255) NULL,
+      google_id VARCHAR(255) UNIQUE NULL,
+      google_avatar VARCHAR(512) NULL,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `;
 
   await pool.query<ResultSetHeader>(createUsersTable);
+
+  const [columns] = await pool.query<RowDataPacket[]>('SHOW COLUMNS FROM users');
+  const columnNames = new Set(columns.map((column) => column.Field as string));
+
+  const passwordColumn = columns.find((column) => column.Field === 'password_hash');
+  if (passwordColumn && passwordColumn.Null === 'NO') {
+    await pool.query('ALTER TABLE users MODIFY COLUMN password_hash VARCHAR(255) NULL');
+  }
+
+  if (!columnNames.has('google_id')) {
+    await pool.query('ALTER TABLE users ADD COLUMN google_id VARCHAR(255) UNIQUE NULL AFTER pin_hash');
+  }
+
+  if (!columnNames.has('google_avatar')) {
+    await pool.query('ALTER TABLE users ADD COLUMN google_avatar VARCHAR(512) NULL AFTER google_id');
+  }
+}
+
+async function ensureUserSettingsTable() {
+  const createSettingsTable = `
+    CREATE TABLE IF NOT EXISTS user_settings (
+      user_id INT PRIMARY KEY,
+      display_name VARCHAR(100) NULL,
+      avatar_url MEDIUMTEXT NULL,
+      timezone VARCHAR(64) DEFAULT 'UTC',
+      notifications_email TINYINT(1) DEFAULT 1,
+      notifications_browser TINYINT(1) DEFAULT 1,
+      auto_lock_new_tabs TINYINT(1) DEFAULT 1,
+      auto_sync_interval INT DEFAULT 5,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      CONSTRAINT fk_user_settings_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `;
+
+  await pool.query<ResultSetHeader>(createSettingsTable);
+
+  const [columns] = await pool.query<RowDataPacket[]>('SHOW COLUMNS FROM user_settings');
+  const columnNames = new Set(columns.map((column) => column.Field as string));
+
+  const addColumn = async (name: string, definition: string, after?: string) => {
+    if (columnNames.has(name)) {
+      return;
+    }
+
+    const clause = after ? ` AFTER ${after}` : '';
+    await pool.query(`ALTER TABLE user_settings ADD COLUMN ${name} ${definition}${clause}`);
+    columnNames.add(name);
+  };
+
+  await addColumn('display_name', 'VARCHAR(100) NULL', 'user_id');
+  await addColumn('avatar_url', 'MEDIUMTEXT NULL', 'display_name');
+  await addColumn('timezone', "VARCHAR(64) DEFAULT 'UTC'", 'avatar_url');
+  await addColumn('notifications_email', 'TINYINT(1) DEFAULT 1', 'timezone');
+  await addColumn('notifications_browser', 'TINYINT(1) DEFAULT 1', 'notifications_email');
+  await addColumn('auto_lock_new_tabs', 'TINYINT(1) DEFAULT 1', 'notifications_browser');
+  await addColumn('auto_sync_interval', 'INT DEFAULT 5', 'auto_lock_new_tabs');
+  await addColumn('updated_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP', 'auto_sync_interval');
 }
 
 async function ensureTabLocksTable() {

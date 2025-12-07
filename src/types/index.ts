@@ -55,6 +55,33 @@ export interface AuthUser {
   id: number;
   email: string;
   hasPin: boolean;
+  avatarUrl: string | null;
+  displayName?: string | null;
+}
+
+export interface UserProfileSettings {
+  displayName: string | null;
+  avatarUrl: string | null;
+  timezone: string;
+  notificationsEmail: boolean;
+  notificationsBrowser: boolean;
+  autoLockNewTabs: boolean;
+  autoSyncInterval: number;
+}
+
+export interface UpdateProfilePayload {
+  displayName?: string | null;
+  avatarUrl?: string | null;
+  timezone?: string;
+  notificationsEmail?: boolean;
+  notificationsBrowser?: boolean;
+  autoLockNewTabs?: boolean;
+  autoSyncInterval?: number;
+}
+
+export interface UserProfileResponse {
+  user: AuthUser;
+  settings: UserProfileSettings;
 }
 
 export interface TabInfo {

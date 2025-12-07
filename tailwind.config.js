@@ -10,8 +10,6 @@ export default {
       },
       colors: {
         neon: {
-          cyan: '#00E8FF',
-          violet: '#7F5AF0',
           blue: '#00f3ff',
           purple: '#bc13fe',
           green: '#0aff0a',
@@ -21,26 +19,9 @@ export default {
         glass: {
           DEFAULT: 'rgba(10, 20, 40, 0.7)',
           border: 'rgba(0, 243, 255, 0.2)',
-        },
-        cyan: {
-          400: '#00f3ff',
-          300: '#33f5ff',
-        },
-        magenta: {
-          400: '#ff00ff',
-          300: '#ff33ff',
-        },
-        violet: {
-          400: '#bc13fe',
-          300: '#cc33fe',
-        },
-        yellow: {
-          400: '#fbbf24',
-          300: '#fcd34d',
-        },
+        }
       },
       boxShadow: {
-        'cyber': '0 30px 80px rgba(4, 8, 13, 0.6)',
         'neon-blue': '0 0 20px rgba(0, 243, 255, 0.3), inset 0 0 10px rgba(0, 243, 255, 0.1)',
         'neon-red': '0 0 20px rgba(255, 0, 60, 0.3), inset 0 0 10px rgba(255, 0, 60, 0.1)',
         'neon-input': '0 0 15px rgba(0, 243, 255, 0.15)',

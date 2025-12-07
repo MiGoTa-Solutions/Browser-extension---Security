@@ -1,3 +1,6 @@
+import { logError, logInfo, logWarn } from '../utils/logger';
+import { GOOGLE_TOKEN_MESSAGE, GOOGLE_ERROR_MESSAGE } from '../utils/googleBridge';
+
 // Define types locally for the service worker
 interface TabLock {
   id: number;
@@ -16,6 +19,37 @@ interface LocalData {
 
 const API_BASE_URL = 'http://127.0.0.1:4000/api';
 const AUTO_LOCK_TIMEOUT_MS = 30 * 60 * 1000; // 30 Minutes
+
+async function persistAuthToken(token: string) {
+  return new Promise<void>((resolve) => {
+    chrome.storage.local.set({ auth_token: token }, () => {
+      if (chrome.runtime.lastError) {
+        logError('ExtensionBackground', 'Failed to persist auth token', { error: chrome.runtime.lastError.message });
+      } else {
+        logInfo('ExtensionBackground', 'Stored auth token from Google login');
+      }
+      resolve();
+    });
+  });
+}
+
+function relayGoogleMessage(type: string, payload: Record<string, unknown> = {}) {
+  try {
+    chrome.runtime.sendMessage({ type, ...payload }, () => {
+      if (chrome.runtime.lastError) {
+        logWarn('ExtensionBackground', 'No active listener for Google relay', {
+          type,
+          error: chrome.runtime.lastError.message,
+        });
+      }
+    });
+  } catch (error) {
+    logError('ExtensionBackground', 'Failed to relay Google message', {
+      type,
+      error: error instanceof Error ? error.message : 'unknown_error',
+    });
+  }
+}
 
 // --- HELPER: Normalize Domain ---
 function normalizeDomain(value?: string | null): string | null {
@@ -47,7 +81,7 @@ async function enforceLocksOnActiveTabs(lockedSites: TabLock[], exceptions: stri
       });
 
       if (matchedLock) {
-        console.log(`[Background] Force-locking active tab: ${hostname}`);
+        logInfo('ExtensionBackground', 'Force-locking active tab', { hostname, lockId: matchedLock.id });
         const lockPageUrl = chrome.runtime.getURL('popup/lock.html') + 
           `?url=${encodeURIComponent(tab.url)}&id=${matchedLock.id}`;
         chrome.tabs.update(tab.id, { url: lockPageUrl });
@@ -61,10 +95,12 @@ async function enforceLocksOnActiveTabs(lockedSites: TabLock[], exceptions: stri
 // --- 2. SYNC LOCKS FROM SERVER ---
 async function syncLocks() {
   try {
+    logInfo('ExtensionBackground', 'Starting lock sync');
     const data = await chrome.storage.local.get(['auth_token', 'unlockedExceptions', 'lockedSites', 'exceptionExpiry']);
     const token = data.auth_token;
     
     if (!token) {
+        logWarn('ExtensionBackground', 'Skipping sync, no auth token found');
         updateBadge('?', '#9ca3af'); 
         return;
     }
@@ -74,7 +110,8 @@ async function syncLocks() {
     });
 
     if (response.status === 401) {
-        updateBadge('!', '#ef4444'); 
+      logWarn('ExtensionBackground', 'Sync failed due to unauthorized token');
+      updateBadge('!', '#ef4444'); 
         return;
     }
 
@@ -124,13 +161,14 @@ async function syncLocks() {
             exceptionExpiry: finalExpiryMap, 
             lastSync: Date.now() 
           });
-          console.log(`[Background] Synced. Active Locks: ${normalizedLocks.length}`);
+          logInfo('ExtensionBackground', 'Synced lock cache', { lockCount: normalizedLocks.length, exceptionCount: cleanedExceptions.length });
       }
       
       enforceLocksOnActiveTabs(normalizedLocks, cleanedExceptions);
       updateBadge('', '');
     }
   } catch (error) {
+    logError('ExtensionBackground', 'Lock sync failed', { error: error instanceof Error ? error.message : 'unknown_error' });
     updateBadge('ERR', '#f59e0b');
   }
 }
@@ -174,7 +212,7 @@ async function handleNavigation(details: { frameId: number; url: string; tabId: 
   });
 
   if (matchedLock) {
-    console.log(`[Background] Blocking ${hostname}`);
+    logInfo('ExtensionBackground', 'Blocking navigation due to lock', { hostname, lockId: matchedLock.id });
     const lockPageUrl = chrome.runtime.getURL('popup/lock.html') + 
       `?url=${encodeURIComponent(details.url)}&id=${matchedLock.id}`;
     chrome.tabs.update(details.tabId, { url: lockPageUrl });
@@ -186,6 +224,7 @@ chrome.webNavigation.onBeforeNavigate.addListener(handleNavigation);
 chrome.webNavigation.onHistoryStateUpdated.addListener(handleNavigation);
 
 chrome.runtime.onInstalled.addListener(() => {
+  logInfo('ExtensionBackground', 'Extension installed/updated, priming sync');
   syncLocks();
   setInterval(syncLocks, 5000);
 });
@@ -193,7 +232,22 @@ chrome.runtime.onInstalled.addListener(() => {
 setInterval(syncLocks, 5000);
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg.type === GOOGLE_TOKEN_MESSAGE && typeof msg.token === 'string') {
+    persistAuthToken(msg.token).then(() => {
+      syncLocks();
+      sendResponse({ success: true });
+    });
+    return true;
+  }
+
+  if (msg.type === GOOGLE_ERROR_MESSAGE) {
+    logWarn('ExtensionBackground', 'Received internal Google error', { error: msg.error ?? 'unknown_error' });
+    sendResponse({ success: true });
+    return true;
+  }
+
   if (msg.type === 'SYNC_LOCKS') {
+    logInfo('ExtensionBackground', 'Received SYNC_LOCKS message');
     syncLocks().then(() => sendResponse({ success: true }));
     return true; 
   }
@@ -204,7 +258,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     const hostname = normalizeDomain(urlToUnlock);
     
     if (hostname) {
-        console.log(`[Background] Adding Exception: ${hostname}`);
+        logInfo('ExtensionBackground', 'Unlock request received', { hostname });
         chrome.storage.local.get(['unlockedExceptions', 'exceptionExpiry']).then(async (data) => {
             const list: string[] = Array.isArray(data.unlockedExceptions) ? data.unlockedExceptions : [];
             const expiry = (data.exceptionExpiry || {}) as Record<string, number>;
@@ -227,6 +281,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.type === 'RELOCK_SITE') {
     const hostname = normalizeDomain(msg.url);
     if (hostname) {
+      logInfo('ExtensionBackground', 'Relock request received', { hostname });
       chrome.storage.local.get(['unlockedExceptions', 'exceptionExpiry']).then(async (data) => {
         let list: string[] = Array.isArray(data.unlockedExceptions) ? data.unlockedExceptions : [];
         let expiry = (data.exceptionExpiry || {}) as Record<string, number>;
@@ -246,8 +301,26 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 });
 
 chrome.runtime.onMessageExternal.addListener((msg, _sender, sendResponse) => {
-    if (msg.type === 'SYNC_LOCKS') {
-        syncLocks().then(() => sendResponse({ success: true }));
-        return true;
-    }
+  if (msg.type === 'SYNC_LOCKS') {
+    logInfo('ExtensionBackground', 'Received external SYNC_LOCKS message');
+    syncLocks().then(() => sendResponse({ success: true }));
+    return true;
+  }
+
+  if (msg.type === GOOGLE_TOKEN_MESSAGE && typeof msg.token === 'string') {
+    logInfo('ExtensionBackground', 'Received external Google token');
+    persistAuthToken(msg.token).then(() => {
+      relayGoogleMessage(GOOGLE_TOKEN_MESSAGE, { token: msg.token });
+      syncLocks();
+      sendResponse({ success: true });
+    });
+    return true;
+  }
+
+  if (msg.type === GOOGLE_ERROR_MESSAGE) {
+    logWarn('ExtensionBackground', 'Received external Google error', { error: msg.error ?? 'unknown_error' });
+    relayGoogleMessage(GOOGLE_ERROR_MESSAGE, { error: msg.error ?? 'unknown_error' });
+    sendResponse({ success: true });
+    return true;
+  }
 });

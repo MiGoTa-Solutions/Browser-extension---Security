@@ -22,6 +22,18 @@ export const getAuthToken = async (): Promise<string | null> => {
   return res.auth_token ?? null;
 };
 
+export const waitForAuthToken = async (timeoutMs = 15000, pollIntervalMs = 250): Promise<string | null> => {
+  const end = Date.now() + timeoutMs;
+  while (Date.now() < end) {
+    const token = await getAuthToken();
+    if (token) {
+      return token;
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+  }
+  return null;
+};
+
 export const clearAuthToken = async (): Promise<void> => {
   if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
     await chrome.storage.local.remove('auth_token');

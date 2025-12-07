@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { NavLink } from 'react-router-dom';
-import { Shield, Lock, AlertTriangle, Eye, Cookie, Menu, X } from 'lucide-react';
+import { Shield, Lock, AlertTriangle, Eye, Cookie, Menu, X, UserCircle } from 'lucide-react';
 import { cn } from '../utils/cn';
 
 const navigationItems = [
@@ -8,7 +8,8 @@ const navigationItems = [
   { path: '/detect', label: 'Site Detector', icon: Shield },
   { path: '/quarantine', label: 'Quarantine', icon: AlertTriangle },
   { path: '/dom', label: 'DOM Inspector', icon: Eye },
-  { path: '/cookies', label: 'Cookie Audit', icon: Cookie }
+  { path: '/cookies', label: 'Cookie Audit', icon: Cookie },
+  { path: '/profile', label: 'Profile & Settings', icon: UserCircle }
 ];
 
 export function Navigation() {
